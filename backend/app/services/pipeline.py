@@ -95,10 +95,9 @@ async def _process_symbol(
     knowledge: list[str],
     historical: list[str],
     upcoming_events: list[dict],
-    db,
     block_new_positions: bool = False,
 ) -> float | None:
-    """Process one symbol: indicators → pre-filter → signal → position open. Returns mark price."""
+    """Process one symbol: indicators → signal → position open. Each call owns its own DB session."""
     candles = await redis_client.zrange_candles(symbol, interval)
     if not candles:
         return None
@@ -109,62 +108,63 @@ async def _process_symbol(
 
     price = indicators.get("current_price", 0)
 
-    # ── Layer 2: Claude/Gemini signal (model from runtime config) ───────────
-    result = await db.execute(
-        select(AISignal).where(
-            AISignal.symbol == symbol,
-            AISignal.market == market,
-        ).order_by(AISignal.created_at.desc()).limit(2)
-    )
-    recent_signals = [
-        {"action": s.action, "confidence": s.confidence,
-         "reasoning": s.reasoning, "created_at": s.created_at.isoformat()}
-        for s in result.scalars()
-    ]
-
-    signal_data = await generate_signal(
-        symbol=symbol, market=market, episode_id=episode.id,
-        recent_candles=candles[-10:], indicators=indicators,
-        active_strategies=active_strats, recent_signals=recent_signals,
-        knowledge_snippets=knowledge,
-        historical_snippets=historical,
-        upcoming_events=upcoming_events,
-    )
-
-    if not signal_data:
-        return price
-
-    # Persist signal
-    ai_signal = AISignal(
-        id=str(uuid.uuid4()), market=market, symbol=symbol,
-        action=signal_data["action"], confidence=signal_data["confidence"],
-        reasoning=signal_data["reasoning"], risk_note=signal_data.get("risk_note", ""),
-        indicators_snapshot=indicators, price_at_signal=price,
-        episode_id=episode.id, created_at=datetime.utcnow(),
-    )
-    db.add(ai_signal)
-    await db.commit()
-
-    await redis_client.publish(f"signal:{market}", {
-        "market": market, "symbol": symbol,
-        "action": signal_data["action"], "confidence": signal_data["confidence"],
-        "reasoning": signal_data["reasoning"], "price": price,
-    })
-
-    # ── Layer 3: Risk check → open position ─────────────────────────────────
-    if block_new_positions:
-        log.info("new_position_blocked_near_close", symbol=symbol, market=market)
-        return price
-
-    trade_decision = await check_signal(db, episode, signal_data)
-    if trade_decision:
-        strat_name = active_strats[0] if active_strats else "Default Momentum"
-        await open_position(
-            db=db, episode_id=episode.id, market=market, symbol=symbol,
-            side=trade_decision["side"], leverage=trade_decision["leverage"],
-            mark_price=price, notional_usd=trade_decision["notional"],
-            strategy_name=strat_name, signal_id=ai_signal.id,
+    async with AsyncSessionLocal() as db:
+        # ── Layer 2: Claude/Gemini signal ───────────────────────────────────
+        result = await db.execute(
+            select(AISignal).where(
+                AISignal.symbol == symbol,
+                AISignal.market == market,
+            ).order_by(AISignal.created_at.desc()).limit(2)
         )
+        recent_signals = [
+            {"action": s.action, "confidence": s.confidence,
+             "reasoning": s.reasoning, "created_at": s.created_at.isoformat()}
+            for s in result.scalars()
+        ]
+
+        signal_data = await generate_signal(
+            symbol=symbol, market=market, episode_id=episode.id,
+            recent_candles=candles[-10:], indicators=indicators,
+            active_strategies=active_strats, recent_signals=recent_signals,
+            knowledge_snippets=knowledge,
+            historical_snippets=historical,
+            upcoming_events=upcoming_events,
+        )
+
+        if not signal_data:
+            return price
+
+        # Persist signal
+        ai_signal = AISignal(
+            id=str(uuid.uuid4()), market=market, symbol=symbol,
+            action=signal_data["action"], confidence=signal_data["confidence"],
+            reasoning=signal_data["reasoning"], risk_note=signal_data.get("risk_note", ""),
+            indicators_snapshot=indicators, price_at_signal=price,
+            episode_id=episode.id, created_at=datetime.utcnow(),
+        )
+        db.add(ai_signal)
+        await db.commit()
+
+        await redis_client.publish(f"signal:{market}", {
+            "market": market, "symbol": symbol,
+            "action": signal_data["action"], "confidence": signal_data["confidence"],
+            "reasoning": signal_data["reasoning"], "price": price,
+        })
+
+        # ── Layer 3: Risk check → open position ─────────────────────────────
+        if block_new_positions:
+            log.info("new_position_blocked_near_close", symbol=symbol, market=market)
+            return price
+
+        trade_decision = await check_signal(db, episode, signal_data)
+        if trade_decision:
+            strat_name = active_strats[0] if active_strats else "Default Momentum"
+            await open_position(
+                db=db, episode_id=episode.id, market=market, symbol=symbol,
+                side=trade_decision["side"], leverage=trade_decision["leverage"],
+                mark_price=price, notional_usd=trade_decision["notional"],
+                strategy_name=strat_name, signal_id=ai_signal.id,
+            )
 
     return price
 
@@ -276,7 +276,7 @@ async def run_signal_loop(market: str) -> None:
                     *[
                         _process_symbol(
                             symbol, market, interval, episode, active_strats,
-                            rule_snippets, hist_snippets, upcoming_events, db,
+                            rule_snippets, hist_snippets, upcoming_events,
                             block_new_positions=block_new_positions,
                         )
                         for symbol in symbols
