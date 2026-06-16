@@ -50,30 +50,33 @@ async def fetch_crypto_fng() -> dict:
         return {"value": 50, "label": "Neutral"}
 
 
-async def fetch_crypto_headlines() -> list[str]:
-    headlines = []
+async def fetch_crypto_headlines() -> list[dict]:
+    items = []
     if settings.crypto_panic_api_key:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 url = CRYPTO_PANIC_URL.format(key=settings.crypto_panic_api_key)
                 r = await client.get(url)
                 for post in r.json().get("results", [])[:8]:
-                    headlines.append(post["title"])
+                    items.append({"title": post["title"], "url": post.get("url", "")})
         except Exception:
             pass
-    return headlines
+    return items
 
 
-async def fetch_rss_headlines(feeds: list[str], limit: int = 5) -> list[str]:
-    headlines = []
+async def fetch_rss_headlines(feeds: list[str], limit: int = 5) -> list[dict]:
+    items = []
     for url in feeds:
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries[:limit]:
-                headlines.append(entry.get("title", ""))
+                title = entry.get("title", "").strip()
+                link = entry.get("link", "")
+                if title:
+                    items.append({"title": title, "url": link})
         except Exception:
             pass
-    return headlines[:10]
+    return items[:10]
 
 
 async def fetch_macro() -> dict:

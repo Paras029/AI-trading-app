@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useStore } from "../../store";
 import type { Episode, Position } from "../../types";
+import { InfoTooltip } from "../ui/InfoTooltip";
 import clsx from "clsx";
 
 interface OverviewData {
@@ -46,8 +47,9 @@ export function OverviewPage() {
 
       {/* Equity card */}
       <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-6">
-        <p className="text-sm text-stone-500 mb-1">
+        <p className="text-xs text-stone-400 mb-1 flex items-center">
           Account Equity · Episode {ep?.generation ?? "—"}
+          <InfoTooltip text="This is simulated (paper) money. The bot starts each episode with $100 and aims for $500 (5×). If it loses too much, the episode ends and a new one begins with lessons learned." />
         </p>
         <p className="text-4xl font-bold text-stone-900">${fmt(ep?.current_equity ?? 0)}</p>
         <div className="flex items-center gap-3 mt-1">
@@ -58,19 +60,22 @@ export function OverviewPage() {
             {pct(gainPct)}
           </span>
           <span className="text-xs text-stone-400">
-            this run · from ${fmt(ep?.start_equity ?? 0)}
+            this run · started at ${fmt(ep?.start_equity ?? 0)}
           </span>
         </div>
 
         {/* Goal progress bar */}
         <div className="mt-4">
           <div className="flex justify-between text-xs text-stone-400 mb-1">
-            <span>Goal · ${fmt(ep?.goal_equity ?? 500)}</span>
+            <span className="flex items-center">
+              Goal · ${fmt(ep?.goal_equity ?? 500)}
+              <InfoTooltip text="The bot targets 5× its starting equity each episode. Once reached, it reviews what worked, banks the lessons, and starts a new episode." />
+            </span>
             <span>{goalPct.toFixed(1)}%</span>
           </div>
           <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
             <div
-              className="h-full bg-active-nav rounded-full transition-all"
+              className="h-full bg-indigo-500 rounded-full transition-all"
               style={{ width: `${Math.min(goalPct, 100)}%` }}
             />
           </div>

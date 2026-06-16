@@ -1,53 +1,68 @@
 """
-Binance WebSocket market data feed via ccxt.pro.
-Publishes OHLCV candles and price ticks to Redis.
+Crypto market data feed using yfinance REST polling.
+No API key required — uses Yahoo Finance public data.
+Polls every 60s and writes OHLCV candles to Redis.
 """
 import asyncio
-import time
 import structlog
+from datetime import datetime
 from app.core import redis_client
-from app.config import settings
 
 log = structlog.get_logger()
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT"]
+SYMBOL_MAP = {
+    "BTCUSDT": "BTC-USD",
+    "ETHUSDT": "ETH-USD",
+}
 INTERVAL = "1m"
+POLL_SECONDS = 60
+
+
+def _fetch_candles(yf_symbol: str) -> list[dict]:
+    import yfinance as yf
+    df = yf.download(yf_symbol, period="1d", interval="1m", progress=False, auto_adjust=True)
+    if df.empty:
+        return []
+    rows = []
+    for ts, row in df.tail(10).iterrows():
+        rows.append({
+            "t": int(ts.timestamp() * 1000),
+            "o": float(row["Open"].iloc[0]) if hasattr(row["Open"], "iloc") else float(row["Open"]),
+            "h": float(row["High"].iloc[0]) if hasattr(row["High"], "iloc") else float(row["High"]),
+            "l": float(row["Low"].iloc[0]) if hasattr(row["Low"], "iloc") else float(row["Low"]),
+            "c": float(row["Close"].iloc[0]) if hasattr(row["Close"], "iloc") else float(row["Close"]),
+            "v": float(row["Volume"].iloc[0]) if hasattr(row["Volume"], "iloc") else float(row["Volume"]),
+        })
+    return rows
 
 
 async def run_crypto_feed() -> None:
-    try:
-        import ccxt.pro as ccxtpro
-    except ImportError:
-        log.error("ccxt not installed — crypto feed disabled")
-        return
+    log.info("crypto_feed_starting", symbols=list(SYMBOL_MAP.keys()), source="yfinance")
+    loop = asyncio.get_event_loop()
 
-    exchange_config: dict = {}
-    if settings.binance_api_key:
-        exchange_config["apiKey"] = settings.binance_api_key
-        exchange_config["secret"] = settings.binance_secret
-    exchange = ccxtpro.binance(exchange_config)
-
-    log.info("crypto_feed_starting", symbols=SYMBOLS)
-
-    async def watch_symbol(symbol: str) -> None:
-        while True:
+    while True:
+        for redis_symbol, yf_symbol in SYMBOL_MAP.items():
             try:
-                ohlcvs = await exchange.watch_ohlcv(symbol, INTERVAL)
-                for ohlcv in ohlcvs:
-                    ts, o, h, l, c, v = ohlcv
-                    candle = {"t": ts, "o": o, "h": h, "l": l, "c": c, "v": v, "symbol": symbol, "market": "crypto"}
-                    key = symbol.replace("/", "")
-                    await redis_client.zadd_candle(key, INTERVAL, ts, candle)
-                    await redis_client.publish(f"ticks:{key}", {
-                        "symbol": symbol, "market": "crypto",
-                        "price": c, "volume": v, "ts": ts,
-                    })
-            except Exception as e:
-                log.warning("crypto_feed_error", symbol=symbol, error=str(e))
-                await asyncio.sleep(5)
+                candles = await loop.run_in_executor(None, _fetch_candles, yf_symbol)
+                if not candles:
+                    log.warning("crypto_feed_empty", symbol=redis_symbol)
+                    continue
 
-    tasks = [asyncio.create_task(watch_symbol(s)) for s in SYMBOLS]
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        await exchange.close()
+                for c in candles:
+                    candle = {**c, "symbol": redis_symbol, "market": "crypto"}
+                    await redis_client.zadd_candle(redis_symbol, INTERVAL, c["t"], candle)
+
+                latest = candles[-1]
+                await redis_client.publish(f"ticks:{redis_symbol}", {
+                    "symbol": redis_symbol,
+                    "market": "crypto",
+                    "price": latest["c"],
+                    "volume": latest["v"],
+                    "ts": latest["t"],
+                })
+                log.debug("crypto_feed_updated", symbol=redis_symbol, price=latest["c"], candles=len(candles))
+
+            except Exception as e:
+                log.warning("crypto_feed_error", symbol=redis_symbol, error=str(e))
+
+        await asyncio.sleep(POLL_SECONDS)

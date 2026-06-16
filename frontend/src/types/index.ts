@@ -106,6 +106,11 @@ export interface AISignal {
   created_at?: string;
 }
 
+export interface Headline {
+  title: string;
+  url: string;
+}
+
 export interface WorldContext {
   updated_at: string;
   crypto_fng: { value: number; label: string };
@@ -113,7 +118,8 @@ export interface WorldContext {
   regime: string;
   funding_rate: number;
   macro: Record<string, number>;
-  headlines: { crypto: string[]; us: string[]; india: string[] };
+  headlines: { crypto: Headline[]; us: Headline[]; india: Headline[] };
+  upcoming_events?: { title: string; country: string; hours_until: number }[];
 }
 
 export interface WsMessage {

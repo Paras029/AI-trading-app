@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useStore } from "../../store";
 import type { Position } from "../../types";
+import { InfoTooltip } from "../ui/InfoTooltip";
 import clsx from "clsx";
 
 export function PositionsPage() {
@@ -55,24 +56,40 @@ function PositionCard({ position: p }: { position: Position }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 text-xs text-stone-500 mb-3">
-        <div><p className="text-stone-400">Entry</p><p className="font-medium text-stone-700">${p.entry_price.toLocaleString()}</p></div>
-        <div><p className="text-stone-400">Mark</p><p className="font-medium text-stone-700">${p.mark_price.toLocaleString()}</p></div>
-        <div><p className="text-stone-400">Notional</p><p className="font-medium text-stone-700">${p.notional.toFixed(0)}</p></div>
-        <div><p className="text-stone-400">Liq</p><p className={clsx("font-medium", liqWarning ? "text-red-600" : "text-stone-700")}>${p.liquidation_price.toLocaleString()}</p></div>
+      <div className="grid grid-cols-4 gap-3 text-xs mb-3">
+        <div>
+          <p className="text-stone-400 flex items-center">Entry<InfoTooltip text="Price at which this position was opened." /></p>
+          <p className="font-medium text-stone-700">${p.entry_price.toLocaleString()}</p>
+        </div>
+        <div>
+          <p className="text-stone-400 flex items-center">Mark<InfoTooltip text="Current market price. P&L is calculated against this." /></p>
+          <p className="font-medium text-stone-700">${p.mark_price.toLocaleString()}</p>
+        </div>
+        <div>
+          <p className="text-stone-400 flex items-center">Notional<InfoTooltip text="Total position size in USD = margin × leverage. This is the actual exposure, not the capital used." /></p>
+          <p className="font-medium text-stone-700">${p.notional.toFixed(0)}</p>
+        </div>
+        <div>
+          <p className="text-stone-400 flex items-center">Liq price<InfoTooltip text="Liquidation price: if the market reaches this level, the position is automatically closed at a near-total loss. The bot monitors and closes positions well before this." /></p>
+          <p className={clsx("font-medium", liqWarning ? "text-red-600" : "text-stone-700")}>${p.liquidation_price.toLocaleString()}</p>
+        </div>
       </div>
 
       {/* Liquidation distance bar */}
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
+      <div>
+        <div className="flex justify-between text-[10px] text-stone-400 mb-1">
+          <span className="flex items-center">
+            Distance to liquidation
+            <InfoTooltip text="How far the price needs to move before this position is liquidated. Below 10% = danger zone (bar turns red)." />
+          </span>
+          <span className={liqWarning ? "text-red-500 font-medium" : ""}>{p.liq_distance_pct.toFixed(1)}% away</span>
+        </div>
+        <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
           <div
-            className={clsx("h-full rounded-full", liqWarning ? "bg-red-400" : "bg-amber-300")}
+            className={clsx("h-full rounded-full transition-all", liqWarning ? "bg-red-400" : "bg-amber-300")}
             style={{ width: `${Math.min(p.liq_distance_pct, 100)}%` }}
           />
         </div>
-        <span className={clsx("text-xs", liqWarning ? "text-red-500" : "text-stone-400")}>
-          watch · {p.liq_distance_pct.toFixed(1)}% away
-        </span>
       </div>
     </div>
   );

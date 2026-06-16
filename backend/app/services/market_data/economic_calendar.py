@@ -25,24 +25,37 @@ EVENT_TAG_MAP = {
 }
 
 
-async def fetch_upcoming_events(hours_ahead: int = 48) -> list[dict]:
-    """
-    Returns list of high-impact events within hours_ahead hours.
-    Each item: {"title": str, "country": str, "hours_until": float, "tags": list[str]}
-    """
+async def _fetch_raw_events() -> list[dict]:
+    """Fetch and store raw calendar events in Redis with 24h TTL."""
+    from app.core import redis_client
+    cached = await redis_client.get_json("cache:ff_calendar")
+    if cached is not None:
+        return cached
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(FF_CALENDAR_URL, headers={"User-Agent": "ApexTradingBot/1.0"})
             resp.raise_for_status()
             events = resp.json()
+        await redis_client.set_json("cache:ff_calendar", events, ttl=86400)
+        log.info("event_calendar_fetched_fresh", count=len(events))
+        return events
     except Exception as e:
         log.warning("event_calendar_fetch_failed", error=str(e))
         return []
 
+
+async def fetch_upcoming_events(hours_ahead: int = 48) -> list[dict]:
+    """
+    Returns list of high-impact events within hours_ahead hours.
+    Each item: {"title": str, "country": str, "hours_until": float, "tags": list[str]}
+    Uses a 24h Redis cache to avoid Forex Factory rate limits (HTTP 429).
+    """
+    raw_events = await _fetch_raw_events()
     now = datetime.now(timezone.utc)
     result = []
 
-    for ev in events:
+    for ev in raw_events:
         if ev.get("impact", "").lower() not in ("high", "3"):
             continue
         try:
@@ -68,5 +81,5 @@ async def fetch_upcoming_events(hours_ahead: int = 48) -> list[dict]:
         })
 
     result.sort(key=lambda e: e["hours_until"])
-    log.debug("upcoming_events_fetched", count=len(result))
+    log.debug("upcoming_events_filtered", count=len(result))
     return result
