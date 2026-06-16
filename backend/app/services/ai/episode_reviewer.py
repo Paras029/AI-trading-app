@@ -7,6 +7,7 @@ from anthropic import AsyncAnthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 from app.config import settings
 from app.services.ai.prompt_builder import REVIEW_SYSTEM_PROMPT, build_review_prompt
+from app.services.cost_tracker import track_usage
 
 log = structlog.get_logger()
 
@@ -51,12 +52,18 @@ async def review_episode(
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     user_prompt = build_review_prompt(episode, trades, existing_lessons)
 
+    model = settings.claude_model
     response = await client.messages.create(
-        model=settings.claude_model,
+        model=model,
         max_tokens=4096,
         system=REVIEW_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
+
+    if hasattr(response, "usage"):
+        await track_usage(model, "episode_review", response.usage,
+                          market=episode.get("market", "all"),
+                          episode_id=episode.get("id"))
 
     raw = response.content[0].text.strip()
     if raw.startswith("```"):

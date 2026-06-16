@@ -10,6 +10,7 @@ from app.services.knowledge_seeder import seed_knowledge_base
 from app.services.strategy_engine import seed_strategies
 from app.db.session import AsyncSessionLocal
 from app.routers import ws, overview, positions, episodes, evolution, strategies, world, lessons, trades
+from app.routers.settings import router as settings_router, costs_router
 
 log = structlog.get_logger()
 
@@ -64,6 +65,8 @@ app.include_router(strategies.router)
 app.include_router(world.router)
 app.include_router(lessons.router)
 app.include_router(trades.router)
+app.include_router(settings_router)
+app.include_router(costs_router)
 
 
 @app.get("/health")

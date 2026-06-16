@@ -59,3 +59,23 @@ async def close_pool() -> None:
     if _pool:
         await _pool.disconnect()
         _pool = None
+
+
+# ── Bot runtime config ─────────────────────────────────────────────────────────
+
+async def get_bot_config() -> dict:
+    from app.config import DEFAULT_BOT_CONFIG
+    data = await get_json("bot:config")
+    if not data:
+        return dict(DEFAULT_BOT_CONFIG)
+    # Merge with defaults so new keys always have a value
+    merged = dict(DEFAULT_BOT_CONFIG)
+    merged.update(data)
+    return merged
+
+
+async def set_bot_config(updates: dict) -> dict:
+    current = await get_bot_config()
+    current.update(updates)
+    await set_json("bot:config", current)
+    return current

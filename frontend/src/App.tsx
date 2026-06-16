@@ -8,6 +8,7 @@ import { StrategiesPage } from "./components/strategies/StrategiesPage";
 import { WorldPage } from "./components/world/WorldPage";
 import { LessonsPage } from "./components/lessons/LessonsPage";
 import { TradesPage } from "./components/trades/TradesPage";
+import { SettingsPage } from "./components/settings/SettingsPage";
 import { useWebSocket } from "./hooks/useWebSocket";
 
 function AppContent() {
@@ -23,6 +24,7 @@ function AppContent() {
         <Route path="world" element={<WorldPage />} />
         <Route path="lessons" element={<LessonsPage />} />
         <Route path="trades" element={<TradesPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
   );

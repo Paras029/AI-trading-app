@@ -2,6 +2,7 @@
 Assembles prompts for the signal generator and episode reviewer.
 """
 from app.core import redis_client
+from app.config import PROMPT_DEPTH_CONFIG
 
 
 SIGNAL_SYSTEM_PROMPT = """You are Apex, an AI trading bot operating in paper simulation mode on real live prices.
@@ -28,12 +29,18 @@ async def build_signal_prompt(
     active_strategies: list[str],
     recent_signals: list[dict],
     knowledge_snippets: list[str],
+    depth: str = "standard",
 ) -> str:
+    dc = PROMPT_DEPTH_CONFIG.get(depth, PROMPT_DEPTH_CONFIG["standard"])
+    n_candles = dc["candles"]
+    n_headlines = dc["headlines"]
+    n_knowledge = dc["knowledge"]
+
     world = await redis_client.get_json("world:context") or {}
 
     candle_lines = "\n".join(
-        f"  {c.get('t','')} O:{c.get('o',0):.2f} H:{c.get('h',0):.2f} L:{c.get('l',0):.2f} C:{c.get('c',0):.2f} V:{c.get('v',0):.0f}"
-        for c in recent_candles[-10:]
+        f"  O:{c.get('o',0):.2f} H:{c.get('h',0):.2f} L:{c.get('l',0):.2f} C:{c.get('c',0):.2f} V:{c.get('v',0):.0f}"
+        for c in recent_candles[-n_candles:]
     )
 
     fng = world.get("crypto_fng" if market == "crypto" else "stock_fng", {})
@@ -43,46 +50,33 @@ async def build_signal_prompt(
     )
 
     signal_history = "\n".join(
-        f"  {s.get('created_at','')} → {s.get('action','')} (conf:{s.get('confidence',0):.2f}): {s.get('reasoning','')[:80]}"
+        f"  {s.get('action','')} conf:{s.get('confidence',0):.2f} — {s.get('reasoning','')[:60]}"
         for s in recent_signals[-2:]
     ) or "  None"
 
-    knowledge = "\n".join(f"  • {k}" for k in knowledge_snippets[:5]) or "  No specific knowledge loaded."
+    knowledge = "\n".join(f"  • {k}" for k in knowledge_snippets[:n_knowledge]) or "  None."
 
     ind = indicators or {}
     bb = ind.get("bollinger", {})
     macd = ind.get("macd", {})
 
-    return f"""Symbol: {symbol} | Market: {market} | Current Price: {ind.get('current_price', 'N/A')}
+    return f"""Symbol: {symbol} | Market: {market} | Price: {ind.get('current_price', 'N/A')}
 
-RECENT CANDLES (last 10):
+CANDLES (last {n_candles}):
 {candle_lines}
 
-TECHNICAL INDICATORS:
-  RSI(14): {ind.get('rsi')}
-  MACD: {macd.get('macd')} | Signal: {macd.get('signal')} | Histogram: {macd.get('histogram')}
-  Bollinger: Upper={bb.get('upper')} Mid={bb.get('middle')} Lower={bb.get('lower')}
-  EMA20: {ind.get('ema_20')} | EMA50: {ind.get('ema_50')}
-  ADX(14): {ind.get('adx')}
+INDICATORS:
+  RSI:{ind.get('rsi')} MACD:{macd.get('macd')} Hist:{macd.get('histogram')}
+  BB upper:{bb.get('upper')} lower:{bb.get('lower')}
+  EMA20:{ind.get('ema_20')} EMA50:{ind.get('ema_50')} ADX:{ind.get('adx')}
 
-WORLD CONTEXT:
-  Regime: {regime}
-  Fear & Greed: {fng.get('value')} ({fng.get('label')})
-  Funding Rate: {world.get('funding_rate', 0):.4f}
-  Macro: {world.get('macro', {})}
+CONTEXT: Regime:{regime} F&G:{fng.get('value')}({fng.get('label')}) Funding:{world.get('funding_rate',0):.4f}
+HEADLINES: {' | '.join(headlines[:n_headlines]) or 'None'}
+STRATEGIES: {', '.join(active_strategies) or 'default'}
+PRIOR SIGNALS: {signal_history}
+RULES: {knowledge}
 
-RECENT HEADLINES:
-{chr(10).join('  • ' + h for h in headlines[:5]) or '  None'}
-
-ACTIVE STRATEGIES: {', '.join(active_strategies) or 'None — use default momentum logic'}
-
-RECENT SIGNALS:
-{signal_history}
-
-KNOWLEDGE BASE (relevant rules):
-{knowledge}
-
-Based on all of the above, generate your trade signal. Respond with JSON only."""
+Respond JSON only: {{"action":"BUY|SELL|HOLD","confidence":0.0-1.0,"reasoning":"...","risk_note":"..."}}"""
 
 
 REVIEW_SYSTEM_PROMPT = """You are Apex's post-episode analyst. After each episode ends (goal hit or blow-up), you:

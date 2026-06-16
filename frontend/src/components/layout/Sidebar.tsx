@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Zap, RefreshCw, TrendingUp, BookOpen, Globe, GraduationCap, ArrowLeftRight } from "lucide-react";
+import { LayoutDashboard, Zap, RefreshCw, TrendingUp, BookOpen, Globe, GraduationCap, ArrowLeftRight, Settings } from "lucide-react";
 import { useStore } from "../../store";
+import { CostWidget } from "../settings/CostWidget";
 import type { Market } from "../../types";
 import clsx from "clsx";
 
@@ -13,6 +14,7 @@ const NAV = [
   { to: "/world", label: "World", icon: Globe },
   { to: "/lessons", label: "Lessons", icon: GraduationCap },
   { to: "/trades", label: "Trades", icon: ArrowLeftRight },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 const MARKETS: { id: Market; label: string; flag: string }[] = [
@@ -82,10 +84,13 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Disclaimer */}
-      <p className="text-[10px] text-stone-400 leading-relaxed mt-4 px-1">
-        Simulation on real live prices. Fake money, real lessons. Honest by design — it can lose everything, it never lies.
-      </p>
+      {/* Cost widget + disclaimer */}
+      <div className="mt-4 px-1">
+        <CostWidget />
+        <p className="text-[10px] text-stone-400 leading-relaxed">
+          Simulation on real live prices. Fake money, real lessons. Honest by design — it can lose everything, it never lies.
+        </p>
+      </div>
     </aside>
   );
 }

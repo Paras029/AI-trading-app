@@ -1,0 +1,19 @@
+{
+  "name": "Apex Trading Bot",
+  "short_name": "Apex Bot",
+  "description": "Self-evolving AI trading bot — simulation on real live prices",
+  "theme_color": "#1c1917",
+  "background_color": "#fafaf9",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/apex.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

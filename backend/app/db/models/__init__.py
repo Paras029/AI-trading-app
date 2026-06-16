@@ -6,8 +6,9 @@ from .trade import Trade
 from .position import Position
 from .signal import AISignal
 from .knowledge import KnowledgeEntry
+from .api_usage import ApiUsage
 
 __all__ = [
     "Episode", "Generation", "Strategy", "Lesson",
-    "Trade", "Position", "AISignal", "KnowledgeEntry",
+    "Trade", "Position", "AISignal", "KnowledgeEntry", "ApiUsage",
 ]
