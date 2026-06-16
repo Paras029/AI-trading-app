@@ -271,8 +271,8 @@ async def run_signal_loop(market: str) -> None:
                     db, market, context_tags, depth_cfg
                 )
 
-                # Process all symbols in parallel
-                await asyncio.gather(
+                # Process all symbols in parallel — log any per-symbol errors
+                results = await asyncio.gather(
                     *[
                         _process_symbol(
                             symbol, market, interval, episode, active_strats,
@@ -283,6 +283,10 @@ async def run_signal_loop(market: str) -> None:
                     ],
                     return_exceptions=True,
                 )
+                for symbol, result in zip(symbols, results):
+                    if isinstance(result, BaseException):
+                        log.error("symbol_processing_failed", market=market,
+                                  symbol=symbol, error=str(result))
 
                 if block_new_positions:
                     log.info("signal_loop_near_close_no_new_positions", market=market, minutes_to_close=mtc)

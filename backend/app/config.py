@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     trading_mode: Literal["paper", "live"] = "paper"
     episode_start_equity: float = 100.0
     episode_goal_multiplier: float = 5.0
-    signal_cooldown_seconds: int = 60
+    signal_cooldown_seconds: int = 50
     bot_name: str = "Apex Trading Bot"
     bot_version: str = "v1"
 
