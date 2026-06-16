@@ -2,6 +2,7 @@
 Calls Claude or Gemini to generate a BUY/SELL/HOLD signal with structured JSON output.
 Model and prompt depth are read from Redis runtime config at call time.
 """
+import asyncio
 import json
 import httpx
 import structlog
@@ -24,6 +25,24 @@ _MODEL_PROVIDER: dict[str, str] = {
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# ── Gemini rate limiter ────────────────────────────────────────────────────────
+# Free tier: 15 RPM. We schedule calls at 4.5s intervals (≈13 RPM) to stay safe.
+# Callers atomically claim a time slot, then wait outside the lock.
+_gemini_slot_lock = asyncio.Lock()
+_gemini_next_slot: float = 0.0
+_GEMINI_SLOT_INTERVAL = 4.5  # seconds between calls
+
+
+async def _claim_gemini_slot() -> float:
+    """Return the monotonic time at which this caller may fire its request."""
+    global _gemini_next_slot
+    loop = asyncio.get_event_loop()
+    async with _gemini_slot_lock:
+        now = loop.time()
+        slot = max(now, _gemini_next_slot)
+        _gemini_next_slot = slot + _GEMINI_SLOT_INTERVAL
+        return slot
+
 
 def get_anthropic_client() -> AsyncAnthropic:
     global _anthropic_client
@@ -32,6 +51,7 @@ def get_anthropic_client() -> AsyncAnthropic:
     return _anthropic_client
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=5, max=30))
 async def _call_anthropic(model: str, max_tokens: int, user_prompt: str) -> tuple[str, object]:
     response = await get_anthropic_client().messages.create(
         model=model,
@@ -49,9 +69,25 @@ async def _call_anthropic(model: str, max_tokens: int, user_prompt: str) -> tupl
     return raw, response.usage
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=10, max=60))
+async def _do_gemini_http(url: str, payload: dict, api_key: str) -> dict:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=payload, params={"key": api_key})
+        if resp.status_code == 429:
+            log.warning("gemini_rate_limited_retrying", status=429)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def _call_gemini(model: str, max_tokens: int, user_prompt: str) -> tuple[str, dict]:
     if not settings.google_api_key:
         raise ValueError("GOOGLE_API_KEY is not configured. Add it to your .env file.")
+
+    # Wait for our rate-limited slot
+    slot = await _claim_gemini_slot()
+    wait = slot - asyncio.get_event_loop().time()
+    if wait > 0:
+        await asyncio.sleep(wait)
 
     url = f"{GEMINI_API_BASE}/{model}:generateContent"
     payload = {
@@ -64,11 +100,7 @@ async def _call_gemini(model: str, max_tokens: int, user_prompt: str) -> tuple[s
         },
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, json=payload, params={"key": settings.google_api_key})
-        resp.raise_for_status()
-        data = resp.json()
-
+    data = await _do_gemini_http(url, payload, settings.google_api_key)
     raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     meta = data.get("usageMetadata", {})
     usage = {
@@ -87,7 +119,6 @@ def _clean_json(raw: str) -> str:
     return raw.strip()
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def generate_signal(
     symbol: str,
     market: str,
@@ -140,4 +171,4 @@ async def generate_signal(
 
     except Exception as e:
         log.error("signal_generation_failed", symbol=symbol, model=model, error=str(e))
-        raise
+        return None
