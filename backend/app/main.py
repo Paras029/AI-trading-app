@@ -29,13 +29,15 @@ async def lifespan(app: FastAPI):
         for market in ["crypto", "us_stocks", "india_stocks", "forex"]:
             await seed_strategies(db, market)
 
-    # Initialise bot config — only write model if Redis has no config yet
-    # (preserves any model the user selected via the UI on subsequent restarts)
+    # Initialise bot config — write default only if absent or model is no longer valid
+    from app.config import DEFAULT_BOT_CONFIG, AVAILABLE_SIGNAL_MODELS
+    valid_model_ids = {m["id"] for m in AVAILABLE_SIGNAL_MODELS}
     existing = await redis_client.get_json("bot:config")
-    if not existing:
-        from app.config import DEFAULT_BOT_CONFIG
-        await redis_client.set_json("bot:config", dict(DEFAULT_BOT_CONFIG))
-        log.info("bot_config_initialised", model=DEFAULT_BOT_CONFIG["signal_model"])
+    if not existing or existing.get("signal_model") not in valid_model_ids:
+        config = dict(existing or {})
+        config.update(DEFAULT_BOT_CONFIG)
+        await redis_client.set_json("bot:config", config)
+        log.info("bot_config_initialised", model=config["signal_model"])
 
     # Start background tasks
     await start_all()
