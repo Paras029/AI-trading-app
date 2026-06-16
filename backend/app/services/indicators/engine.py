@@ -12,7 +12,7 @@ log = structlog.get_logger()
 
 async def compute_indicators(symbol: str, interval: str = "1m") -> dict | None:
     candles = await redis_client.zrange_candles(symbol, interval, limit=200)
-    if len(candles) < 50:
+    if len(candles) < 20:
         return None
 
     df = pd.DataFrame(candles, columns=["t", "o", "h", "l", "c", "v", "symbol", "market"])
@@ -82,8 +82,8 @@ def should_call_llm(indicators: dict) -> bool:
     histogram = macd.get("histogram")
     prev_histogram = indicators.get("_prev_macd_histogram")
 
-    # Rule 1: RSI at extremes
-    if rsi is not None and (rsi < 30 or rsi > 70):
+    # Rule 1: RSI at notable levels (relaxed from 30/70 — paper mode, Gemini is free)
+    if rsi is not None and (rsi < 35 or rsi > 65):
         return True
 
     # Rule 2: MACD histogram crossed zero

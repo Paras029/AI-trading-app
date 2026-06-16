@@ -20,11 +20,11 @@ POLL_SECONDS = 60
 
 def _fetch_candles(yf_symbol: str) -> list[dict]:
     import yfinance as yf
-    df = yf.download(yf_symbol, period="1d", interval="1m", progress=False, auto_adjust=True)
+    df = yf.download(yf_symbol, period="5d", interval="1m", progress=False, auto_adjust=True)
     if df.empty:
         return []
     rows = []
-    for ts, row in df.tail(10).iterrows():
+    for ts, row in df.tail(200).iterrows():
         rows.append({
             "t": int(ts.timestamp() * 1000),
             "o": float(row["Open"].iloc[0]) if hasattr(row["Open"], "iloc") else float(row["Open"]),
@@ -48,6 +48,8 @@ async def run_crypto_feed() -> None:
                     log.warning("crypto_feed_empty", symbol=redis_symbol)
                     continue
 
+                # Write all candles each poll — seeds Redis with 200 candles so
+                # indicator engine (needs ≥50) works on the very first cycle.
                 for c in candles:
                     candle = {**c, "symbol": redis_symbol, "market": "crypto"}
                     await redis_client.zadd_candle(redis_symbol, INTERVAL, c["t"], candle)
