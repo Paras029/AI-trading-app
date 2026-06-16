@@ -97,13 +97,15 @@ AVAILABLE_SIGNAL_MODELS = [
 
 # ── Prompt depth presets ───────────────────────────────────────────────────────
 PROMPT_DEPTH_CONFIG = {
-    "compact":  {"candles": 3,  "headlines": 2, "knowledge": 1, "max_tokens": 300},
-    "standard": {"candles": 5,  "headlines": 3, "knowledge": 2, "max_tokens": 400},
-    "rich":     {"candles": 10, "headlines": 5, "knowledge": 5, "max_tokens": 600},
+    "compact":  {"candles": 3,  "headlines": 2, "knowledge": 1, "historical": 0, "max_tokens": 350},
+    "standard": {"candles": 5,  "headlines": 3, "knowledge": 2, "historical": 1, "max_tokens": 550},
+    "rich":     {"candles": 10, "headlines": 5, "knowledge": 3, "historical": 2, "max_tokens": 800},
 }
 
 # ── Default runtime bot config (stored in Redis, editable via UI) ─────────────
 DEFAULT_BOT_CONFIG = {
     "signal_model": settings.claude_model,   # users start on Sonnet
     "prompt_depth": "standard",
+    "daily_loss_limit_pct": 0.10,            # 10% daily drawdown → auto-pause
+    "auto_close_at_market_close": False,     # close positions 5min before market close
 }

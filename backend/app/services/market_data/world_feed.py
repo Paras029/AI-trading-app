@@ -112,28 +112,32 @@ def detect_regime(macro: dict, fng_value: int) -> str:
 
 async def refresh_world_context() -> None:
     log.info("world_feed_refreshing")
-    fng, crypto_news, us_news, india_news, macro, funding = await asyncio.gather(
+    from app.services.market_data.economic_calendar import fetch_upcoming_events
+
+    fng, crypto_news, us_news, india_news, macro, funding, upcoming = await asyncio.gather(
         fetch_crypto_fng(),
         fetch_crypto_headlines(),
         fetch_rss_headlines(US_RSS_FEEDS),
         fetch_rss_headlines(INDIA_RSS_FEEDS),
         fetch_macro(),
         fetch_funding_rate(),
+        fetch_upcoming_events(48),
         return_exceptions=True,
     )
-    # Gracefully handle any gather exceptions
     fng = fng if isinstance(fng, dict) else {"value": 50, "label": "Neutral"}
     macro = macro if isinstance(macro, dict) else {}
+    upcoming = upcoming if isinstance(upcoming, list) else []
 
     regime = detect_regime(macro, fng.get("value", 50))
 
     context = {
         "updated_at": datetime.utcnow().isoformat(),
         "crypto_fng": fng,
-        "stock_fng": {"value": 50, "label": "Neutral"},   # CNN scrape placeholder
+        "stock_fng": {"value": 50, "label": "Neutral"},
         "regime": regime,
         "funding_rate": funding if isinstance(funding, float) else 0.0,
         "macro": macro,
+        "upcoming_events": upcoming,
         "headlines": {
             "crypto": crypto_news if isinstance(crypto_news, list) else [],
             "us": us_news if isinstance(us_news, list) else [],
@@ -142,7 +146,7 @@ async def refresh_world_context() -> None:
     }
     await redis_client.set_json("world:context", context, ttl=600)
     await redis_client.publish("world_update", {"market": "all", **context})
-    log.info("world_feed_refreshed", regime=regime)
+    log.info("world_feed_refreshed", regime=regime, upcoming_events=len(upcoming))
 
 
 async def run_world_feed_loop(interval_seconds: int = 300) -> None:

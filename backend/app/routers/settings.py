@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.config import AVAILABLE_SIGNAL_MODELS, PROMPT_DEPTH_CONFIG, DEFAULT_BOT_CONFIG, settings
 from app.core import redis_client
 from app.db.models import ApiUsage
+from app.services.market_hours import market_status_all
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 costs_router = APIRouter(prefix="/api/costs", tags=["costs"])
@@ -66,6 +67,27 @@ async def update_settings(body: dict):
 
     updated = await redis_client.set_bot_config(updates)
     return {"config": updated}
+
+
+@router.post("/pause")
+async def pause_bot():
+    await redis_client.set_bot_paused(True)
+    return {"paused": True, "message": "Signal generation paused. SL/TP monitoring continues."}
+
+
+@router.post("/resume")
+async def resume_bot():
+    await redis_client.set_bot_paused(False)
+    return {"paused": False, "message": "Bot resumed."}
+
+
+@router.get("/status")
+async def bot_status():
+    paused = await redis_client.is_bot_paused()
+    return {
+        "paused": paused,
+        "market_hours": market_status_all(),
+    }
 
 
 @costs_router.get("")

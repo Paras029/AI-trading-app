@@ -30,6 +30,8 @@ async def build_signal_prompt(
     recent_signals: list[dict],
     knowledge_snippets: list[str],
     depth: str = "standard",
+    historical_snippets: list[str] | None = None,
+    upcoming_events: list[dict] | None = None,
 ) -> str:
     dc = PROMPT_DEPTH_CONFIG.get(depth, PROMPT_DEPTH_CONFIG["standard"])
     n_candles = dc["candles"]
@@ -48,6 +50,7 @@ async def build_signal_prompt(
     headlines = world.get("headlines", {}).get(
         "crypto" if market == "crypto" else ("india" if market == "india_stocks" else "us"), []
     )
+    macro = world.get("macro", {})
 
     signal_history = "\n".join(
         f"  {s.get('action','')} conf:{s.get('confidence',0):.2f} — {s.get('reasoning','')[:60]}"
@@ -60,6 +63,31 @@ async def build_signal_prompt(
     bb = ind.get("bollinger", {})
     macd = ind.get("macd", {})
 
+    # Build optional UPCOMING section
+    upcoming_section = ""
+    if upcoming_events:
+        imminent = [e for e in upcoming_events if e.get("hours_until", 999) < 48]
+        if imminent:
+            event_parts = " | ".join(
+                f"{e['title']} in {e['hours_until']}h" for e in imminent[:3]
+            )
+            upcoming_section = f"\nUPCOMING ⚠: {event_parts} → reduce position sizes\n"
+
+    # Build optional HISTORICAL PARALLELS section
+    historical_section = ""
+    if historical_snippets:
+        lines = "\n".join(f"  {h}" for h in historical_snippets)
+        historical_section = f"\nHISTORICAL PARALLELS:\n{lines}\n"
+
+    macro_ctx = ""
+    if macro:
+        parts = []
+        if "VIX" in macro:   parts.append(f"VIX:{macro['VIX']:.1f}")
+        if "US10Y" in macro:  parts.append(f"US10Y:{macro['US10Y']:.2f}%")
+        if "DXY" in macro:    parts.append(f"DXY:{macro['DXY']:.1f}")
+        if parts:
+            macro_ctx = " " + " ".join(parts)
+
     return f"""Symbol: {symbol} | Market: {market} | Price: {ind.get('current_price', 'N/A')}
 
 CANDLES (last {n_candles}):
@@ -70,11 +98,11 @@ INDICATORS:
   BB upper:{bb.get('upper')} lower:{bb.get('lower')}
   EMA20:{ind.get('ema_20')} EMA50:{ind.get('ema_50')} ADX:{ind.get('adx')}
 
-CONTEXT: Regime:{regime} F&G:{fng.get('value')}({fng.get('label')}) Funding:{world.get('funding_rate',0):.4f}
-HEADLINES: {' | '.join(headlines[:n_headlines]) or 'None'}
+CONTEXT: Regime:{regime} F&G:{fng.get('value')}({fng.get('label')}) Funding:{world.get('funding_rate',0):.4f}{macro_ctx}
+HEADLINES: {' | '.join(headlines[:n_headlines]) or 'None'}{upcoming_section}{historical_section}
+RULES: {knowledge}
 STRATEGIES: {', '.join(active_strategies) or 'default'}
 PRIOR SIGNALS: {signal_history}
-RULES: {knowledge}
 
 Respond JSON only: {{"action":"BUY|SELL|HOLD","confidence":0.0-1.0,"reasoning":"...","risk_note":"..."}}"""
 

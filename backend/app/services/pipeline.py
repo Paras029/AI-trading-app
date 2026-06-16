@@ -7,7 +7,7 @@ import asyncio
 import uuid
 from datetime import datetime
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.db.session import AsyncSessionLocal
 from app.db.models import AISignal, KnowledgeEntry
 from app.core import redis_client
@@ -15,8 +15,11 @@ from app.services.indicators.engine import compute_indicators, should_call_llm
 from app.services.ai.signal_generator import generate_signal
 from app.services.episode_manager import get_or_create_active_episode, check_episode_completion, update_equity
 from app.services.strategy_engine import get_active_strategy_names
-from app.services.risk import check_signal, monitor_stop_loss_take_profit
+from app.services.risk import check_signal, monitor_stop_loss_take_profit, check_daily_loss_limit
 from app.services.execution.paper import open_position, close_position
+from app.services.market_hours import is_market_open, minutes_to_close
+from app.services.knowledge.context_matcher import extract_context_tags, score_entry
+from app.config import PROMPT_DEPTH_CONFIG
 
 log = structlog.get_logger()
 
@@ -36,13 +39,51 @@ SL_MONITOR_INTERVAL = 10    # seconds — fast loop
 SIGNAL_INTERVAL = 60        # seconds — slow loop
 
 
-async def _get_knowledge_snippets(db, market: str, limit: int = 5) -> list[str]:
+async def _get_knowledge_snippets(
+    db,
+    market: str,
+    context_tags: list[str],
+    depth_cfg: dict,
+) -> tuple[list[str], list[str]]:
+    """Context-aware retrieval. Returns (rule_snippets, historical_snippets)."""
     result = await db.execute(
         select(KnowledgeEntry).where(
             (KnowledgeEntry.market == market) | (KnowledgeEntry.market == "all")
-        ).order_by(KnowledgeEntry.importance.desc()).limit(limit)
+        )
     )
-    return [f"{k.title}: {k.content[:120]}" for k in result.scalars()]
+    entries = list(result.scalars())
+
+    # Score every entry against current context
+    scored = []
+    for e in entries:
+        s = score_entry(e, context_tags)
+        scored.append((s, e))
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    rule_cats = {"risk_management", "risk", "strategy", "regime", "lesson"}
+    rules = [e for _, e in scored if e.category in rule_cats]
+    history = [e for _, e in scored if e.category not in rule_cats]
+
+    n_rules = depth_cfg.get("knowledge", 2)
+    n_hist = depth_cfg.get("historical", 1)
+
+    rule_snippets = [f"{e.title}: {e.content[:120]}" for e in rules[:n_rules]]
+    hist_snippets = [f"[{e.category}] {e.title}: {e.content[:250]}" for e in history[:n_hist]]
+
+    # Increment times_referenced for returned entries (fire-and-forget)
+    ids_referenced = [e.id for e in rules[:n_rules]] + [e.id for e in history[:n_hist]]
+    if ids_referenced:
+        try:
+            await db.execute(
+                update(KnowledgeEntry)
+                .where(KnowledgeEntry.id.in_(ids_referenced))
+                .values(times_referenced=KnowledgeEntry.times_referenced + 1)
+            )
+            await db.commit()
+        except Exception:
+            pass
+
+    return rule_snippets, hist_snippets
 
 
 async def _process_symbol(
@@ -52,7 +93,10 @@ async def _process_symbol(
     episode,
     active_strats: list[str],
     knowledge: list[str],
+    historical: list[str],
+    upcoming_events: list[dict],
     db,
+    block_new_positions: bool = False,
 ) -> float | None:
     """Process one symbol: indicators → pre-filter → signal → position open. Returns mark price."""
     candles = await redis_client.zrange_candles(symbol, interval)
@@ -70,7 +114,7 @@ async def _process_symbol(
         log.debug("signal_skipped_pre_filter", symbol=symbol)
         return price
 
-    # ── Layer 2: Claude signal (model from runtime config) ──────────────────
+    # ── Layer 2: Claude/Gemini signal (model from runtime config) ───────────
     result = await db.execute(
         select(AISignal).where(
             AISignal.symbol == symbol,
@@ -88,6 +132,8 @@ async def _process_symbol(
         recent_candles=candles[-10:], indicators=indicators,
         active_strategies=active_strats, recent_signals=recent_signals,
         knowledge_snippets=knowledge,
+        historical_snippets=historical,
+        upcoming_events=upcoming_events,
     )
 
     if not signal_data:
@@ -111,6 +157,10 @@ async def _process_symbol(
     })
 
     # ── Layer 3: Risk check → open position ─────────────────────────────────
+    if block_new_positions:
+        log.info("new_position_blocked_near_close", symbol=symbol, market=market)
+        return price
+
     trade_decision = await check_signal(db, episode, signal_data)
     if trade_decision:
         strat_name = active_strats[0] if active_strats else "Default Momentum"
@@ -131,11 +181,6 @@ async def run_sl_monitor(market: str) -> None:
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                from app.db.models.episode import EpisodeOutcome
-                result = await db.execute(
-                    select(type("Episode", (), {}))
-                )
-                # Re-import properly inside loop to avoid stale references
                 from app.db.models import Episode
                 from app.db.models.episode import EpisodeOutcome as EO
                 ep_result = await db.execute(
@@ -181,19 +226,71 @@ async def run_signal_loop(market: str) -> None:
 
     while True:
         try:
+            # ── Guard 1: Market hours ────────────────────────────────────────
+            if not is_market_open(market):
+                log.debug("signal_loop_market_closed", market=market)
+                await asyncio.sleep(SIGNAL_INTERVAL)
+                continue
+
+            # ── Guard 2: Pause flag ──────────────────────────────────────────
+            if await redis_client.is_bot_paused():
+                log.info("signal_loop_paused", market=market)
+                await asyncio.sleep(SIGNAL_INTERVAL)
+                continue
+
+            # ── Guard 3: Near market close → block new positions ─────────────
+            mtc = minutes_to_close(market)
+            block_new_positions = mtc is not None and mtc <= 15
+
             async with AsyncSessionLocal() as db:
                 episode = await get_or_create_active_episode(db, market)
+
+                # ── Guard 4: Daily loss limit ────────────────────────────────
+                bot_config = await redis_client.get_bot_config()
+                daily_loss_pct = float(bot_config.get("daily_loss_limit_pct", 0.10))
+                if await check_daily_loss_limit(db, episode, daily_loss_pct):
+                    log.warning("daily_loss_limit_triggered_auto_pause", market=market)
+                    await redis_client.set_bot_paused(True)
+                    await asyncio.sleep(SIGNAL_INTERVAL)
+                    continue
+
                 active_strats = await get_active_strategy_names(db, market)
-                knowledge = await _get_knowledge_snippets(db, market)
+
+                # ── Context-aware knowledge retrieval ────────────────────────
+                world = await redis_client.get_json("world:context") or {}
+                upcoming_events = world.get("upcoming_events", [])
+
+                # Use first symbol's indicators as a proxy for context tags
+                first_indicators = await redis_client.get_json(f"indicators:{symbols[0]}") if symbols else {}
+                context_tags = extract_context_tags(
+                    market=market,
+                    indicators=first_indicators or {},
+                    world=world,
+                    upcoming_events=upcoming_events,
+                )
+
+                depth = bot_config.get("prompt_depth", "standard")
+                depth_cfg = PROMPT_DEPTH_CONFIG.get(depth, PROMPT_DEPTH_CONFIG["standard"])
+
+                rule_snippets, hist_snippets = await _get_knowledge_snippets(
+                    db, market, context_tags, depth_cfg
+                )
 
                 # Process all symbols in parallel
                 await asyncio.gather(
                     *[
-                        _process_symbol(symbol, market, interval, episode, active_strats, knowledge, db)
+                        _process_symbol(
+                            symbol, market, interval, episode, active_strats,
+                            rule_snippets, hist_snippets, upcoming_events, db,
+                            block_new_positions=block_new_positions,
+                        )
                         for symbol in symbols
                     ],
-                    return_exceptions=True,   # don't let one failed symbol kill the others
+                    return_exceptions=True,
                 )
+
+                if block_new_positions:
+                    log.info("signal_loop_near_close_no_new_positions", market=market, minutes_to_close=mtc)
 
         except Exception as e:
             log.error("signal_loop_error", market=market, error=str(e))

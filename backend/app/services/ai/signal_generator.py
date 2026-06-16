@@ -97,6 +97,8 @@ async def generate_signal(
     active_strategies: list[str],
     recent_signals: list[dict],
     knowledge_snippets: list[str],
+    historical_snippets: list[str] | None = None,
+    upcoming_events: list[dict] | None = None,
 ) -> dict | None:
     lock_key = f"signal_lock:{market}:{symbol}"
     if not await redis_client.set_lock(lock_key, settings.signal_cooldown_seconds):
@@ -116,6 +118,8 @@ async def generate_signal(
         symbol, market, candles_to_send, indicators,
         active_strategies, recent_signals, knowledge_snippets,
         depth=depth,
+        historical_snippets=historical_snippets,
+        upcoming_events=upcoming_events,
     )
 
     provider = _MODEL_PROVIDER.get(model, "anthropic")

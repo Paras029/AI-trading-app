@@ -1,10 +1,11 @@
 """
 Risk manager: Kelly position sizing, stop-loss/take-profit checks,
-leverage limits, and liquidation monitoring.
+leverage limits, liquidation monitoring, and daily loss limit.
 """
 import structlog
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.db.models import Episode, Position, Trade
 
 log = structlog.get_logger()
@@ -103,3 +104,25 @@ async def monitor_stop_loss_take_profit(
             to_close.append((trade, "take-profit"))
 
     return to_close
+
+
+async def check_daily_loss_limit(
+    db: AsyncSession,
+    episode: Episode,
+    limit_pct: float = 0.10,
+) -> bool:
+    """Returns True if the bot lost more than limit_pct of current equity in the last 24h."""
+    since = datetime.utcnow() - timedelta(hours=24)
+    result = await db.execute(
+        select(func.sum(Trade.pnl)).where(
+            Trade.episode_id == episode.id,
+            Trade.closed_at >= since,
+            Trade.is_open == False,
+        )
+    )
+    daily_pnl = float(result.scalar() or 0.0)
+    threshold = episode.current_equity * limit_pct
+    if daily_pnl < -threshold:
+        log.warning("daily_loss_limit_hit", daily_pnl=daily_pnl, threshold=-threshold)
+        return True
+    return False

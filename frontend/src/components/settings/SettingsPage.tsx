@@ -33,6 +33,11 @@ interface SettingsData {
   prompt_depths: DepthOption[];
 }
 
+interface BotStatus {
+  paused: boolean;
+  market_hours: Record<string, boolean>;
+}
+
 interface CostEntry {
   model?: string;
   call_type?: string;
@@ -52,6 +57,13 @@ interface CostsData {
 
 type Period = "today" | "week" | "all";
 
+const MARKET_LABELS: Record<string, string> = {
+  crypto: "Crypto",
+  us_stocks: "US Stocks",
+  india_stocks: "India",
+  forex: "Forex",
+};
+
 function fmt(n: number) {
   return n < 0.001 ? "<$0.001" : `$${n.toFixed(4)}`;
 }
@@ -63,6 +75,12 @@ export function SettingsPage() {
   const { data: settings, isLoading } = useQuery<SettingsData>({
     queryKey: ["settings"],
     queryFn: () => axios.get("/api/settings").then((r) => r.data),
+  });
+
+  const { data: status, refetch: refetchStatus } = useQuery<BotStatus>({
+    queryKey: ["bot-status"],
+    queryFn: () => axios.get("/api/settings/status").then((r) => r.data),
+    refetchInterval: 10000,
   });
 
   const { data: costs, isLoading: costsLoading } = useQuery<CostsData>({
@@ -79,11 +97,21 @@ export function SettingsPage() {
     },
   });
 
+  const pauseMutation = useMutation({
+    mutationFn: (paused: boolean) =>
+      axios.post(`/api/settings/${paused ? "pause" : "resume"}`).then((r) => r.data),
+    onSuccess: () => {
+      refetchStatus();
+    },
+  });
+
   if (isLoading || !settings) {
     return <div className="text-stone-400 p-6">Loading settings…</div>;
   }
 
   const { config, available_models, prompt_depths } = settings;
+  const paused = status?.paused ?? false;
+  const market_hours = status?.market_hours ?? {};
 
   return (
     <div className="p-6 max-w-2xl space-y-8">
@@ -93,6 +121,68 @@ export function SettingsPage() {
           Changes apply immediately — no restart needed.
         </p>
       </div>
+
+      {/* ── Trading Controls ─────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
+          Trading Controls
+        </h2>
+        <div className="border rounded-lg p-4 bg-white space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className={clsx(
+                  "inline-block w-2 h-2 rounded-full",
+                  paused ? "bg-red-500" : "bg-green-500"
+                )}
+              />
+              <span className="text-sm font-medium text-stone-800">
+                {paused ? "Bot Paused" : "Bot Running"}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => pauseMutation.mutate(true)}
+                disabled={paused || pauseMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Pause All Trading
+              </button>
+              <button
+                onClick={() => pauseMutation.mutate(false)}
+                disabled={!paused || pauseMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Resume Trading
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-stone-500">
+            Pause stops new signals. Stop-loss and take-profit monitoring keeps running.
+          </p>
+          {Object.keys(MARKET_LABELS).length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {Object.entries(MARKET_LABELS).map(([key, label]) => {
+                const open = market_hours[key];
+                return (
+                  <span
+                    key={key}
+                    className={clsx(
+                      "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs",
+                      open
+                        ? "bg-green-50 text-green-700 border border-green-200"
+                        : "bg-stone-100 text-stone-500 border border-stone-200"
+                    )}
+                  >
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", open ? "bg-green-500" : "bg-stone-400")} />
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* ── Signal Model ─────────────────────────────────────────── */}
       <section>

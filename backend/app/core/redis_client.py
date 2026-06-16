@@ -79,3 +79,19 @@ async def set_bot_config(updates: dict) -> dict:
     current.update(updates)
     await set_json("bot:config", current)
     return current
+
+
+# ── Bot pause / resume ─────────────────────────────────────────────────────────
+
+async def is_bot_paused() -> bool:
+    async with get_client() as r:
+        val = await r.get("bot:paused")
+        return val == "1"
+
+
+async def set_bot_paused(paused: bool) -> None:
+    async with get_client() as r:
+        if paused:
+            await r.set("bot:paused", "1")
+        else:
+            await r.delete("bot:paused")
