@@ -99,7 +99,7 @@ INDICATORS:
   EMA20:{ind.get('ema_20')} EMA50:{ind.get('ema_50')} ADX:{ind.get('adx')}
 
 CONTEXT: Regime:{regime} F&G:{fng.get('value')}({fng.get('label')}) Funding:{world.get('funding_rate',0):.4f}{macro_ctx}
-HEADLINES: {' | '.join(headlines[:n_headlines]) or 'None'}{upcoming_section}{historical_section}
+HEADLINES: {' | '.join(h.get('title', str(h)) if isinstance(h, dict) else h for h in headlines[:n_headlines]) or 'None'}{upcoming_section}{historical_section}
 RULES: {knowledge}
 STRATEGIES: {', '.join(active_strategies) or 'default'}
 PRIOR SIGNALS: {signal_history}
