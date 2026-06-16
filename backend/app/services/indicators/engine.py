@@ -38,26 +38,34 @@ async def compute_indicators(symbol: str, interval: str = "1m") -> dict | None:
         except Exception:
             return None
 
+    def safe_col(df, col, idx=-1):
+        try:
+            if df is None or col not in df.columns:
+                return None
+            return safe(df[col], idx)
+        except Exception:
+            return None
+
     snapshot = {
         "rsi": safe(rsi),
         "macd": {
-            "macd": safe(macd_df["MACD_12_26_9"]) if macd_df is not None else None,
-            "signal": safe(macd_df["MACDs_12_26_9"]) if macd_df is not None else None,
-            "histogram": safe(macd_df["MACDh_12_26_9"]) if macd_df is not None else None,
+            "macd": safe_col(macd_df, "MACD_12_26_9"),
+            "signal": safe_col(macd_df, "MACDs_12_26_9"),
+            "histogram": safe_col(macd_df, "MACDh_12_26_9"),
         },
         "bollinger": {
-            "upper": safe(bb["BBU_20_2.0"]) if bb is not None else None,
-            "middle": safe(bb["BBM_20_2.0"]) if bb is not None else None,
-            "lower": safe(bb["BBL_20_2.0"]) if bb is not None else None,
+            "upper": safe_col(bb, "BBU_20_2.0"),
+            "middle": safe_col(bb, "BBM_20_2.0"),
+            "lower": safe_col(bb, "BBL_20_2.0"),
         },
         "ema_20": safe(ema20),
         "ema_50": safe(ema50),
-        "adx": safe(adx_df["ADX_14"]) if adx_df is not None else None,
+        "adx": safe_col(adx_df, "ADX_14"),
         "current_price": safe(close),
     }
 
     # Also store previous histogram for crossover detection
-    prev_histogram = safe(macd_df["MACDh_12_26_9"], -2) if macd_df is not None else None
+    prev_histogram = safe_col(macd_df, "MACDh_12_26_9", -2)
     snapshot["_prev_macd_histogram"] = prev_histogram
 
     await redis_client.set_json(f"indicators:{symbol}", snapshot, ttl=120)
