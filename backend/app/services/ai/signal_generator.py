@@ -24,6 +24,10 @@ _MODEL_PROVIDER: dict[str, str] = {
 }
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_API_BASE_V1 = "https://generativelanguage.googleapis.com/v1/models"
+
+# Models that need the stable v1 endpoint
+_GEMINI_V1_MODELS = {"gemini-2.5-flash", "gemini-2.0-flash"}
 
 # ── Gemini rate limiter ────────────────────────────────────────────────────────
 # Free tier: 15 RPM. We schedule calls at 4.5s intervals (≈13 RPM) to stay safe.
@@ -90,7 +94,8 @@ async def _call_gemini(model: str, max_tokens: int, user_prompt: str) -> tuple[s
     if wait > 0:
         await asyncio.sleep(wait)
 
-    url = f"{GEMINI_API_BASE}/{model}:generateContent"
+    base = GEMINI_API_BASE_V1 if model in _GEMINI_V1_MODELS else GEMINI_API_BASE
+    url = f"{base}/{model}:generateContent"
     payload = {
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "systemInstruction": {"parts": [{"text": SIGNAL_SYSTEM_PROMPT}]},
