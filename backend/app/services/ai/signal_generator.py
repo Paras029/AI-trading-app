@@ -73,8 +73,9 @@ async def _call_anthropic(model: str, max_tokens: int, user_prompt: str) -> tupl
 async def _do_gemini_http(url: str, payload: dict, api_key: str) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(url, json=payload, params={"key": api_key})
-        if resp.status_code == 429:
-            log.warning("gemini_rate_limited_retrying", status=429)
+        if not resp.is_success:
+            log.warning("gemini_http_error", status=resp.status_code,
+                        body=resp.text[:300], model=url.split("/")[-1].split(":")[0])
         resp.raise_for_status()
         return resp.json()
 
