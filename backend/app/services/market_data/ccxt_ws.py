@@ -21,11 +21,11 @@ async def run_crypto_feed() -> None:
         log.error("ccxt not installed — crypto feed disabled")
         return
 
-    exchange = ccxtpro.binance({
-        "apiKey": settings.binance_api_key or None,
-        "secret": settings.binance_secret or None,
-        "options": {"defaultType": "future"},
-    })
+    exchange_config: dict = {}
+    if settings.binance_api_key:
+        exchange_config["apiKey"] = settings.binance_api_key
+        exchange_config["secret"] = settings.binance_secret
+    exchange = ccxtpro.binance(exchange_config)
 
     log.info("crypto_feed_starting", symbols=SYMBOLS)
 

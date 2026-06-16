@@ -29,6 +29,14 @@ async def lifespan(app: FastAPI):
         for market in ["crypto", "us_stocks", "india_stocks", "forex"]:
             await seed_strategies(db, market)
 
+    # Initialise bot config — only write model if Redis has no config yet
+    # (preserves any model the user selected via the UI on subsequent restarts)
+    existing = await redis_client.get_json("bot:config")
+    if not existing:
+        from app.config import DEFAULT_BOT_CONFIG
+        await redis_client.set_json("bot:config", dict(DEFAULT_BOT_CONFIG))
+        log.info("bot_config_initialised", model=DEFAULT_BOT_CONFIG["signal_model"])
+
     # Start background tasks
     await start_all()
     log.info("apex_trading_bot_ready")

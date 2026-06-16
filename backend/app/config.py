@@ -103,8 +103,17 @@ PROMPT_DEPTH_CONFIG = {
 }
 
 # ── Default runtime bot config (stored in Redis, editable via UI) ─────────────
+def _default_signal_model() -> str:
+    """Pick best available model based on configured API keys."""
+    if settings.google_api_key:
+        return "gemini-2.0-flash"
+    if settings.anthropic_api_key:
+        return "claude-haiku-4-5-20251001"
+    return "gemini-2.0-flash"   # fallback — will error at call time if key missing
+
+
 DEFAULT_BOT_CONFIG = {
-    "signal_model": settings.claude_model,   # users start on Sonnet
+    "signal_model": _default_signal_model(),   # auto-detect from available keys
     "prompt_depth": "standard",
     "daily_loss_limit_pct": 0.10,            # 10% daily drawdown → auto-pause
     "auto_close_at_market_close": False,     # close positions 5min before market close
