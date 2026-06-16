@@ -58,22 +58,22 @@ settings = Settings()
 # Only models listed here will appear in the Settings page dropdown.
 AVAILABLE_SIGNAL_MODELS = [
     {
-        "id": "gemini-1.5-flash",
-        "name": "Gemini 1.5 Flash — Free (Recommended)",
+        "id": "gemini-2.0-flash",
+        "name": "Gemini 2.0 Flash — Free (Recommended)",
         "provider": "google",
         "tier": "free",
         "input_cost_per_m": 0.0,
         "output_cost_per_m": 0.0,
-        "description": "Stable, fast, free. 1500 req/day. Requires GOOGLE_API_KEY.",
+        "description": "Current free-tier Gemini model. 15 RPM. Requires GOOGLE_API_KEY.",
     },
     {
-        "id": "gemini-2.0-flash",
-        "name": "Gemini 2.0 Flash — Free",
+        "id": "gemini-2.0-flash-lite",
+        "name": "Gemini 2.0 Flash Lite — Free",
         "provider": "google",
         "tier": "free",
         "input_cost_per_m": 0.0,
         "output_cost_per_m": 0.0,
-        "description": "Faster and smarter. Free quota. Requires GOOGLE_API_KEY.",
+        "description": "Lighter, higher quota. Fallback if 2.0 Flash hits limits.",
     },
     {
         "id": "claude-haiku-4-5-20251001",
@@ -106,10 +106,10 @@ PROMPT_DEPTH_CONFIG = {
 def _default_signal_model() -> str:
     """Pick best available model based on configured API keys."""
     if settings.google_api_key:
-        return "gemini-1.5-flash"
+        return "gemini-2.0-flash"
     if settings.anthropic_api_key:
         return "claude-haiku-4-5-20251001"
-    return "gemini-1.5-flash"   # fallback — will error at call time if key missing
+    return "gemini-2.0-flash"   # fallback — will error at call time if key missing
 
 
 DEFAULT_BOT_CONFIG = {

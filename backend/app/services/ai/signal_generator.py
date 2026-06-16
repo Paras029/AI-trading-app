@@ -30,7 +30,7 @@ GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # Callers atomically claim a time slot, then wait outside the lock.
 _gemini_slot_lock = asyncio.Lock()
 _gemini_next_slot: float = 0.0
-_GEMINI_SLOT_INTERVAL = 4.5  # seconds between calls
+_GEMINI_SLOT_INTERVAL = 7.0  # seconds between calls (~8 RPM, safe under 15 RPM free tier)
 
 
 async def _claim_gemini_slot() -> float:
