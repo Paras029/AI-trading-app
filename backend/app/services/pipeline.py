@@ -109,11 +109,6 @@ async def _process_symbol(
 
     price = indicators.get("current_price", 0)
 
-    # ── Layer 1: Indicator pre-filter (zero tokens if flat market) ──────────
-    if not should_call_llm(indicators):
-        log.debug("signal_skipped_pre_filter", symbol=symbol)
-        return price
-
     # ── Layer 2: Claude/Gemini signal (model from runtime config) ───────────
     result = await db.execute(
         select(AISignal).where(
