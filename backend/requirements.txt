@@ -14,11 +14,11 @@ alembic==1.13.3
 redis[hiredis]==5.1.0
 
 # ─── AI ───────────────────────────────────────────────────────────────
-anthropic==0.50.0
+anthropic>=0.40.0
 google-generativeai==0.8.3
 
 # ─── Market data — crypto ─────────────────────────────────────────────
-ccxt==4.4.0
+ccxt>=4.1.0
 
 # ─── Market data — US stocks ──────────────────────────────────────────
 alpaca-py==0.29.0
