@@ -109,7 +109,11 @@ def extract_context_tags(
             tags.append("gdp_event")
 
     # ── Headline keyword scan ──────────────────────────────────────────────────
-    all_headlines = " ".join(sum(world.get("headlines", {}).values(), [])).lower()
+    all_headlines = " ".join(
+        h.get("title", "") if isinstance(h, dict) else h
+        for hl in world.get("headlines", {}).values()
+        for h in hl
+    ).lower()
     if any(w in all_headlines for w in ["war", "conflict", "sanctions", "invasion", "military", "missile"]):
         tags.append("geopolitical_risk")
     if any(w in all_headlines for w in ["bankrupt", "collapse", "hack", "insolvent", "fraud", "contagion"]):
