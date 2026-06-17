@@ -160,7 +160,13 @@ def build_postmortem_prompt(trade: dict, market: dict, signal: dict, similar_pas
         for p in similar_past[:3]
     ) or "  None."
 
-    return f"""TRADE OUTCOME: {outcome}
+    closed_early_note = (
+        "\nNOTE: this position was closed manually before market resolution, not held to "
+        "settlement — treat the outcome as a realized mark-to-market exit, not a natural win/loss."
+        if trade.get("status") == "closed_early" else ""
+    )
+
+    return f"""TRADE OUTCOME: {outcome}{closed_early_note}
 MARKET QUESTION: {market.get('question', '')}
 SIDE: {trade.get('side', '')}
 ENTRY PRICE: {trade.get('entry_price', 0):.3f}

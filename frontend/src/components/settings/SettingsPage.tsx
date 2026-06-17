@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import clsx from "clsx";
 import type { SettingsData, BotConfig, BotStatus, Mode } from "../../types";
+import { ConfirmPhraseInput } from "../ui/ConfirmPhraseInput";
 
 interface CostEntry {
   model?: string;
@@ -32,7 +33,6 @@ function fmt(n: number) {
 export function SettingsPage() {
   const qc = useQueryClient();
   const [period, setPeriod] = useState<Period>("today");
-  const [confirmText, setConfirmText] = useState("");
   const [localGates, setLocalGates] = useState<Partial<BotConfig> | null>(null);
 
   const { data: settings, isLoading } = useQuery<SettingsData>({
@@ -77,13 +77,22 @@ export function SettingsPage() {
       axios.post("/api/settings/arm-live", { confirmation }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
-      setConfirmText("");
     },
   });
 
   const disarmMutation = useMutation({
     mutationFn: () => axios.post("/api/settings/disarm-live").then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+
+  const startMutation = useMutation({
+    mutationFn: () => axios.post("/api/settings/start").then((r) => r.data),
+    onSuccess: () => refetchStatus(),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => axios.post("/api/settings/stop").then((r) => r.data),
+    onSuccess: () => refetchStatus(),
   });
 
   if (isLoading || !settings || !localGates) {
@@ -96,9 +105,9 @@ export function SettingsPage() {
     0
   ) || 1;
   const paused = status?.paused ?? false;
+  const running = status?.running ?? false;
   const mode = config.prediction_trading_mode;
   const armed = config.live_armed;
-  const phraseMatches = confirmText === ARM_PHRASE;
 
   function saveGateField(key: keyof BotConfig, value: number) {
     setLocalGates((g) => (g ? { ...g, [key]: value } : g));
@@ -124,10 +133,53 @@ export function SettingsPage() {
         </p>
       </div>
 
-      {/* ── Trading Controls ─────────────────────────────────────────── */}
+      {/* ── Bot Lifecycle ─────────────────────────────────────────────── */}
       <section>
         <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
-          Trading Controls
+          Bot Lifecycle
+        </h2>
+        <div className="border rounded-lg p-4 bg-white space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className={clsx(
+                  "inline-block w-2 h-2 rounded-full",
+                  running ? "bg-green-500" : "bg-stone-400"
+                )}
+              />
+              <span className="text-sm font-medium text-stone-800">
+                {running ? "Bot Started" : "Bot Stopped"}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => startMutation.mutate()}
+                disabled={running || startMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Start Bot
+              </button>
+              <button
+                onClick={() => stopMutation.mutate()}
+                disabled={!running || stopMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Stop Bot
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-stone-500">
+            The pipeline never auto-starts on boot — start it here. Stopping cancels the
+            scanner/research/prediction/risk/settlement loops; it does not close any open
+            trades. Close positions from the Trades page.
+          </p>
+        </div>
+      </section>
+
+      {/* ── Trade Gating ──────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
+          Trade Gating
         </h2>
         <div className="border rounded-lg p-4 bg-white space-y-3">
           <div className="flex items-center justify-between">
@@ -145,14 +197,14 @@ export function SettingsPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => pauseMutation.mutate(true)}
-                disabled={paused || pauseMutation.isPending}
+                disabled={!running || paused || pauseMutation.isPending}
                 className="px-3 py-1.5 text-xs font-medium rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Pause All Trading
               </button>
               <button
                 onClick={() => pauseMutation.mutate(false)}
-                disabled={!paused || pauseMutation.isPending}
+                disabled={!running || !paused || pauseMutation.isPending}
                 className="px-3 py-1.5 text-xs font-medium rounded border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Resume Trading
@@ -160,7 +212,7 @@ export function SettingsPage() {
             </div>
           </div>
           <p className="text-xs text-stone-500">
-            Pause stops new risk-approved trades. Scanner/Research/Prediction keep running so the UI stays informative; the kill switch (gate 1 of 9) short-circuits the Risk stage.
+            Pause stops new risk-approved trades. Scanner/Research/Prediction keep running so the UI stays informative; the kill switch (gate 1 of 9) short-circuits the Risk stage. Disabled while the bot is stopped.
           </p>
         </div>
       </section>
@@ -207,33 +259,20 @@ export function SettingsPage() {
             Full gate grid and live decision log live on the Risk page. Type the exact phrase
             below to arm — real funds will be used once "Live" mode and "Armed" are both active.
           </p>
-          <p className="text-xs font-mono bg-white border border-red-200 rounded px-2 py-1 text-red-800">
-            {ARM_PHRASE}
-          </p>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            placeholder="Type confirmation phrase"
+          <ConfirmPhraseInput
+            phrase={ARM_PHRASE}
+            onConfirm={() => armMutation.mutate(ARM_PHRASE)}
             disabled={armed}
-            className="w-full border border-red-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50"
+            pending={armMutation.isPending}
+            buttonLabel="Arm Live Trading"
           />
-          <div className="flex gap-2">
-            <button
-              onClick={() => armMutation.mutate(confirmText)}
-              disabled={!phraseMatches || armed || armMutation.isPending}
-              className="flex-1 px-3 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              Arm Live Trading
-            </button>
-            <button
-              onClick={() => disarmMutation.mutate()}
-              disabled={!armed || disarmMutation.isPending}
-              className="flex-1 px-3 py-2 rounded-lg text-sm font-medium border border-stone-300 text-stone-700 hover:bg-stone-50 disabled:opacity-40 transition-colors"
-            >
-              Disarm
-            </button>
-          </div>
+          <button
+            onClick={() => disarmMutation.mutate()}
+            disabled={!armed || disarmMutation.isPending}
+            className="w-full px-3 py-2 rounded-lg text-sm font-medium border border-stone-300 text-stone-700 hover:bg-stone-50 disabled:opacity-40 transition-colors"
+          >
+            Disarm
+          </button>
         </div>
       </section>
 

@@ -327,8 +327,9 @@ async def _pipeline_status_pass() -> None:
             select(func.count(Trade.id)).where(Trade.status == "open")
         )).scalar() or 0
 
+    running = await redis_client.is_bot_running()
     paused = await redis_client.is_bot_paused()
-    system_status = "paused" if paused else "operational"
+    system_status = "stopped" if not running else ("paused" if paused else "operational")
 
     await redis_client.publish("pipeline:status", {
         "scanner": int(scanner_count),
@@ -353,6 +354,9 @@ async def run_pipeline_status_loop() -> None:
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 async def start_all() -> None:
+    if _tasks:
+        log.info("orchestrator_start_skipped_already_running")
+        return
     log.info("orchestrator_starting")
     _tasks.extend([
         asyncio.create_task(run_scanner_loop(), name="scanner_loop"),
@@ -366,6 +370,9 @@ async def start_all() -> None:
 
 
 async def stop_all() -> None:
+    if not _tasks:
+        log.info("orchestrator_stop_skipped_already_stopped")
+        return
     for task in _tasks:
         task.cancel()
     await asyncio.gather(*_tasks, return_exceptions=True)

@@ -17,6 +17,7 @@ const STATUS_STYLE: Record<string, string> = {
   operational: "bg-emerald-50 text-emerald-700 border-emerald-200",
   degraded: "bg-amber-50 text-amber-700 border-amber-200",
   paused: "bg-red-50 text-red-600 border-red-200",
+  stopped: "bg-stone-100 text-stone-500 border-stone-200",
 };
 
 function fmt(n: number) {

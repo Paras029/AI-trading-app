@@ -7,6 +7,7 @@ from app.db import models   # noqa: F401 — ensure models are registered
 from app.db.cleanup_legacy_tables import drop_legacy_tables
 from app.core import redis_client
 from app.tasks.runner import start_all, stop_all
+from app.services import orchestrator
 from app.services.knowledge_seeder import seed_knowledge_base
 from app.routers import (
     ws, dashboard, scanner, research, prediction, risk, postmortem, trades,
@@ -40,13 +41,19 @@ async def lifespan(app: FastAPI):
         existing["live_armed"] = False
         await redis_client.set_json("bot:config", existing)
 
-    # Start background tasks (5-stage pipeline + WS Redis listener)
+    # The 5-stage pipeline never auto-starts — every boot forces a fresh "stopped" state so
+    # the user must explicitly click Start in the UI (POST /api/settings/start).
+    await redis_client.set_bot_running(False)
+
+    # Start always-on infra (WS Redis listener). The orchestrator's pipeline loops are
+    # started/stopped on demand via the settings router, not here.
     await start_all()
     log.info("apex_trading_bot_ready")
 
     yield
 
     log.info("apex_trading_bot_stopping")
+    await orchestrator.stop_all()
     await stop_all()
     await redis_client.close_pool()
 

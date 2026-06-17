@@ -1,7 +1,7 @@
 // ── Execution / portfolio ────────────────────────────────────────────────
 export type Mode = "paper" | "live";
 export type TradeSide = "YES" | "NO";
-export type TradeStatus = "open" | "settled_win" | "settled_loss" | "settled_void" | "cancelled";
+export type TradeStatus = "open" | "settled_win" | "settled_loss" | "settled_void" | "cancelled" | "closed_early";
 export type SignalAction = "BUY_YES" | "BUY_NO" | "WATCH" | "SKIP";
 export type ForecastStatus = "ok" | "skipped_no_key" | "error" | "timeout" | "thinking";
 export type MarketStatus =
@@ -21,7 +21,7 @@ export type FailureCategory =
   | "bad_execution"
   | "overweighted_sentiment"
   | "model_overconfidence";
-export type SystemStatus = "operational" | "degraded" | "paused";
+export type SystemStatus = "operational" | "degraded" | "paused" | "stopped";
 export type GateName =
   | "kill_switch"
   | "edge_threshold"
@@ -326,6 +326,7 @@ export interface SettingsData {
 
 export interface BotStatus {
   paused: boolean;
+  running: boolean;
 }
 
 // ── WebSocket envelope ──────────────────────────────────────────────────

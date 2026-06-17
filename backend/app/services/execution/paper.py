@@ -119,6 +119,58 @@ async def settle_trade(db: AsyncSession, trade: Trade, resolved_outcome: str) ->
     return trade
 
 
+async def close_trade_early(db: AsyncSession, trade: Trade) -> Trade:
+    """
+    Closes an open paper trade before market resolution, marking to the CURRENT REAL
+    Polymarket price (same data source as fill_order) rather than the binary 1.0/0.0
+    settlement price used by settle_trade. Triggers the same postmortem flow so lessons
+    get banked for early exits too.
+    """
+    if trade.status != "open":
+        raise ValueError(f"trade {trade.id} is not open (status={trade.status})")
+
+    market_result = await db.execute(select(PredictionMarket).where(PredictionMarket.id == trade.market_id))
+    market = market_result.scalar_one_or_none()
+    if market is None:
+        raise ValueError(f"market {trade.market_id} not found")
+
+    token_id = market.yes_token_id if trade.side == "YES" else market.no_token_id
+    current_price = await polymarket.fetch_price(token_id) if token_id else 0.0
+    if current_price <= 0:
+        current_price = market.current_yes_price if trade.side == "YES" else (1 - market.current_yes_price)
+
+    if trade.side == "YES":
+        payout = trade.shares * current_price
+    else:
+        payout = trade.shares * (1 - current_price)
+    pnl = payout - trade.stake_usdc
+
+    trade.exit_price = current_price
+    trade.pnl = round(pnl, 4)
+    trade.pnl_pct = round((pnl / trade.stake_usdc) * 100, 2) if trade.stake_usdc else 0.0
+    trade.status = "closed_early"
+    trade.settled_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(trade)
+
+    from app.db.models import Portfolio
+    pf_result = await db.execute(select(Portfolio).where(Portfolio.id == trade.portfolio_id))
+    pf = pf_result.scalar_one_or_none()
+    if pf:
+        await portfolio_service.mark_trade_closed(db, pf, pnl, payout)
+
+    await redis_client.publish("trade_update:paper", trade_to_dict(trade))
+    log.info("paper_trade_closed_early", trade_id=trade.id, exit_price=current_price, pnl=pnl)
+
+    try:
+        from app.services.agents.postmortem_agent import run_postmortem
+        await run_postmortem(db, trade)
+    except Exception as e:
+        log.error("postmortem_trigger_failed", trade_id=trade.id, error=str(e))
+
+    return trade
+
+
 def trade_to_dict(trade: Trade) -> dict:
     return {
         "id": trade.id,

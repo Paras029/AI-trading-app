@@ -6,7 +6,7 @@ import {
   ArrowLeftRight, GraduationCap, Settings,
 } from "lucide-react";
 import { CostWidget } from "../settings/CostWidget";
-import type { SettingsData } from "../../types";
+import type { SettingsData, BotStatus } from "../../types";
 import clsx from "clsx";
 
 const NAV = [
@@ -65,6 +65,30 @@ function ModeChip() {
   );
 }
 
+function BotStateChip() {
+  const { data: status } = useQuery<BotStatus>({
+    queryKey: ["bot-status"],
+    queryFn: () => axios.get("/api/settings/status").then((r) => r.data),
+    refetchInterval: 10000,
+  });
+
+  const running = status?.running ?? false;
+
+  return (
+    <div
+      className={clsx(
+        "flex items-center justify-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md mb-1.5 tracking-wide",
+        running
+          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+          : "bg-stone-100 text-stone-500 border border-stone-200"
+      )}
+    >
+      <span className={clsx("w-1.5 h-1.5 rounded-full", running ? "bg-emerald-500" : "bg-stone-400")} />
+      {running ? "BOT RUNNING" : "BOT STOPPED"}
+    </div>
+  );
+}
+
 export function Sidebar() {
   return (
     <aside className="w-48 min-h-full bg-white border-r border-stone-200 flex flex-col py-3 px-2.5 shrink-0">
@@ -88,6 +112,7 @@ export function Sidebar() {
 
       {/* Mode chip + cost widget + disclaimer */}
       <div className="mt-auto pt-4 px-0.5">
+        <BotStateChip />
         <ModeChip />
         <CostWidget />
         <p className="text-[10px] text-stone-400 leading-relaxed mt-2">

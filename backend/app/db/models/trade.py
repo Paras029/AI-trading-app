@@ -27,7 +27,7 @@ class Trade(Base):
     exec_venue: Mapped[str] = mapped_column(String, default="paper")  # paper | polymarket_clob
     exec_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
     exec_tx_hash: Mapped[str | None] = mapped_column(String, nullable=True)
-    # open | settled_win | settled_loss | settled_void | cancelled
+    # open | settled_win | settled_loss | settled_void | cancelled | closed_early
     status: Mapped[str] = mapped_column(String, default="open", index=True)
     exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     pnl: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -65,8 +65,9 @@ async def get_dashboard(
         select(func.count(Trade.id)).where(Trade.status == "open")
     )).scalar() or 0
 
+    running = await redis_client.is_bot_running()
     paused = await redis_client.is_bot_paused()
-    system_status = "paused" if paused else "operational"
+    system_status = "stopped" if not running else ("paused" if paused else "operational")
 
     pnl_today = 0.0
     if portfolio:

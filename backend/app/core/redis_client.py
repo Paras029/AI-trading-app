@@ -95,3 +95,19 @@ async def set_bot_paused(paused: bool) -> None:
             await r.set("bot:paused", "1")
         else:
             await r.delete("bot:paused")
+
+
+# ── Bot start / stop ───────────────────────────────────────────────────────────
+
+async def is_bot_running() -> bool:
+    async with get_client() as r:
+        val = await r.get("bot:running")
+        return val == "1"
+
+
+async def set_bot_running(running: bool) -> None:
+    async with get_client() as r:
+        if running:
+            await r.set("bot:running", "1")
+        else:
+            await r.delete("bot:running")

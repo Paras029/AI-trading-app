@@ -54,6 +54,7 @@ async def _build_lesson(trade: Trade, market: PredictionMarket, signal: Predicti
         "pnl_pct": trade.pnl_pct,
         "kelly_fraction_used": trade.kelly_fraction_used,
         "full_kelly_fraction": trade.full_kelly_fraction,
+        "status": trade.status,
     }
     market_dict = {"question": market.question if market else ""}
     signal_dict = {

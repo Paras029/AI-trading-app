@@ -17,6 +17,7 @@ from app.config import (
 from app.core import redis_client
 from app.db.models import ApiUsage
 from app.services.ai import providers
+from app.services import orchestrator
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 costs_router = APIRouter(prefix="/api/costs", tags=["costs"])
@@ -140,10 +141,35 @@ async def resume_bot():
     return {"paused": False, "message": "Bot resumed."}
 
 
+@router.post("/start")
+async def start_bot():
+    """Starts the 5-stage orchestrator pipeline. Never auto-invoked at process boot —
+    the user must explicitly start the bot from the UI."""
+    if await redis_client.is_bot_running():
+        return {"running": True, "message": "Bot already running."}
+    await orchestrator.start_all()
+    await redis_client.set_bot_running(True)
+    log.warning("bot_started")
+    return {"running": True, "message": "Bot started — pipeline loops are now running."}
+
+
+@router.post("/stop")
+async def stop_bot():
+    """Stops the 5-stage orchestrator pipeline. Open trades are left untouched — close
+    them individually or in bulk via POST /api/trades/{id}/close or /close-all."""
+    if not await redis_client.is_bot_running():
+        return {"running": False, "message": "Bot already stopped."}
+    await orchestrator.stop_all()
+    await redis_client.set_bot_running(False)
+    log.warning("bot_stopped")
+    return {"running": False, "message": "Bot stopped. Open trades are untouched — close them via /api/trades if needed."}
+
+
 @router.get("/status")
 async def bot_status():
     paused = await redis_client.is_bot_paused()
-    return {"paused": paused}
+    running = await redis_client.is_bot_running()
+    return {"paused": paused, "running": running}
 
 
 @costs_router.get("")
