@@ -7,8 +7,11 @@ class Settings(BaseSettings):
 
     # AI
     anthropic_api_key: str = ""
-    claude_model: str = "claude-sonnet-4-6"          # used for episode reviews (kept high quality)
+    claude_model: str = "claude-sonnet-4-6"          # used for episode reviews / post-mortems (kept high quality)
     claude_model_fast: str = "claude-haiku-4-5-20251001"  # used for signals by default
+    google_api_key: str = ""    # Google Gemini — free tier available
+    openai_api_key: str = ""
+    deepseek_api_key: str = ""
 
     # Database
     database_url: str = "postgresql+asyncpg://trading:trading_local@localhost:5432/trading"
@@ -16,40 +19,23 @@ class Settings(BaseSettings):
 
     # Trading
     trading_mode: Literal["paper", "live"] = "paper"
-    episode_start_equity: float = 100.0
-    episode_goal_multiplier: float = 5.0
-    signal_cooldown_seconds: int = 50
-    bot_name: str = "Apex Trading Bot"
-    bot_version: str = "v1"
+    prediction_trading_mode: Literal["paper", "live"] = "paper"
+    bot_name: str = "Apex Prediction Bot"
+    bot_version: str = "v2"
 
-    # Alpaca (US Stocks)
-    alpaca_api_key: str = ""
-    alpaca_secret_key: str = ""
-    alpaca_paper: bool = True
+    # Polymarket (live execution only — never logged)
+    polymarket_private_key: str = ""
+    polymarket_funder_address: str = ""
 
-    # Binance (Crypto)
-    binance_api_key: str = ""
-    binance_secret: str = ""
+    # Portfolio
+    portfolio_starting_balance: float = 1000.0
 
-    # Zerodha Kite (India Stocks)
-    kite_api_key: str = ""
-    kite_api_secret: str = ""
-    kite_user_id: str = ""
-    kite_password: str = ""
-    kite_totp_secret: str = ""
-
-    # OANDA (Forex)
-    oanda_api_key: str = ""
-    oanda_account_id: str = ""
-    oanda_practice: bool = True
-
-    # Google AI (Gemini — free tier available)
-    google_api_key: str = ""
+    # XGBoost ensemble blending
+    xgboost_min_samples: int = 30
+    xgboost_retrain_interval: int = 10
 
     # News & Sentiment
-    news_api_key: str = ""
-    crypto_panic_api_key: str = ""
-    alpha_vantage_key: str = ""
+    news_api_key: str = ""   # optional NewsAPI fallback
 
 
 settings = Settings()
@@ -95,26 +81,78 @@ AVAILABLE_SIGNAL_MODELS = [
     },
 ]
 
+# ── Forecast ensemble roles (source of truth the Settings UI renders from) ────
+AVAILABLE_FORECAST_ROLES = [
+    {
+        "role": "primary_forecaster",
+        "provider": "anthropic",
+        "default_model": "claude-sonnet-4-6",
+        "default_weight": 0.30,
+        "requires_key": "anthropic_api_key",
+    },
+    {
+        "role": "news_analyst",
+        "provider": "anthropic",
+        "default_model": "claude-haiku-4-5-20251001",
+        "default_weight": 0.20,
+        "requires_key": "anthropic_api_key",
+    },
+    {
+        "role": "bull_advocate",
+        "provider": "openai",
+        "default_model": "gpt-4o",
+        "default_weight": 0.20,
+        "requires_key": "openai_api_key",
+    },
+    {
+        "role": "bear_advocate",
+        "provider": "google",
+        "default_model": "gemini-2.0-flash",
+        "default_weight": 0.15,
+        "requires_key": "google_api_key",
+    },
+    {
+        "role": "risk_contrarian",
+        "provider": "deepseek",
+        "default_model": "deepseek-chat",
+        "default_weight": 0.15,
+        "requires_key": "deepseek_api_key",
+    },
+]
+
 # ── Prompt depth presets ───────────────────────────────────────────────────────
+# NOTE: retained even though the old indicator-signal pipeline that consumed this is being
+# rewritten in parallel — leave in place unless/until confirmed dead, since prompt-depth-style
+# presets may still be useful for the new research/forecast prompt builders.
 PROMPT_DEPTH_CONFIG = {
     "compact":  {"candles": 3,  "headlines": 2, "knowledge": 1, "historical": 0, "max_tokens": 350},
     "standard": {"candles": 5,  "headlines": 3, "knowledge": 2, "historical": 1, "max_tokens": 550},
     "rich":     {"candles": 10, "headlines": 5, "knowledge": 3, "historical": 2, "max_tokens": 800},
 }
 
+# ── Risk gate defaults ─────────────────────────────────────────────────────────
+RISK_GATE_DEFAULTS = {
+    "min_edge_pct": 0.05,
+    "max_position_pct": 0.05,
+    "single_position_cap_usd": 100.0,
+    "max_total_exposure_pct": 0.40,
+    "max_concurrent_positions": 8,
+    "max_drawdown_pct": 0.25,
+    "daily_loss_limit_pct": 0.10,
+    "max_slippage_pct": 0.03,
+    "kelly_multiplier": 0.25,
+}
+
 # ── Default runtime bot config (stored in Redis, editable via UI) ─────────────
-def _default_signal_model() -> str:
-    """Pick best available model based on configured API keys."""
-    if settings.google_api_key:
-        return "gemini-2.0-flash"
-    if settings.anthropic_api_key:
-        return "claude-haiku-4-5-20251001"
-    return "gemini-2.0-flash"   # fallback — will error at call time if key missing
-
-
 DEFAULT_BOT_CONFIG = {
-    "signal_model": _default_signal_model(),   # auto-detect from available keys
-    "prompt_depth": "standard",
-    "daily_loss_limit_pct": 0.10,            # 10% daily drawdown → auto-pause
-    "auto_close_at_market_close": False,     # close positions 5min before market close
+    **RISK_GATE_DEFAULTS,
+    "prediction_trading_mode": "paper",
+    "live_armed": False,   # never default True — must be explicitly armed via POST /api/settings/arm-live
+    "forecast_role_weights": {r["role"]: r["default_weight"] for r in AVAILABLE_FORECAST_ROLES},
+    "forecast_role_models": {r["role"]: r["default_model"] for r in AVAILABLE_FORECAST_ROLES},
+    "scan_interval_seconds": 300,
+    "scanner_categories": ["politics", "crypto", "sports", "pop-culture"],
+    "scanner_min_volume": 5000,
+    "scanner_max_expiry_days": 30,
+    "scanner_min_edge_pct": 0.05,
 }
