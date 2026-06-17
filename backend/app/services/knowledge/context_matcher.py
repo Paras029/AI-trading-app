@@ -1,131 +1,94 @@
 """
-Extracts situational tags from live market data, then scores knowledge entries
-against those tags so the most relevant history surfaces in each signal prompt.
+Extracts situational tags from a prediction-market trade context, then scores knowledge
+entries / past post-mortems against those tags so the most relevant history surfaces in
+each research brief / post-mortem prompt.
+
+score_entry()'s formula is reused byte-for-byte from the old technical-indicator bot — it
+has zero domain-specific logic. extract_context_tags() is fully rewritten with prediction-
+market vocabulary (category, edge_bucket, sentiment_gap_bucket, role_agreement,
+failure_category).
 """
 from __future__ import annotations
 
 
+def _bucket_edge(edge_pct: float) -> str:
+    edge_pct = abs(edge_pct)
+    if edge_pct >= 0.20:
+        return "edge_huge"
+    if edge_pct >= 0.10:
+        return "edge_large"
+    if edge_pct >= 0.05:
+        return "edge_medium"
+    return "edge_small"
+
+
+def _bucket_gap(gap_pct: float) -> str:
+    gap_pct = abs(gap_pct)
+    if gap_pct >= 0.20:
+        return "sentiment_gap_extreme"
+    if gap_pct >= 0.10:
+        return "sentiment_gap_large"
+    if gap_pct >= 0.05:
+        return "sentiment_gap_medium"
+    return "sentiment_gap_small"
+
+
 def extract_context_tags(
-    market: str,
-    indicators: dict,
-    world: dict,
-    upcoming_events: list[dict] | None = None,
+    category: str = "",
+    edge_pct: float | None = None,
+    gap_pct: float | None = None,
+    role_agreement_pct: float | None = None,
+    failure_category: str | None = None,
+    source_agreement_pct: float | None = None,
+    used_xgboost: bool | None = None,
+    action: str | None = None,
 ) -> list[str]:
-    tags: list[str] = [market]
-    macro = world.get("macro", {})
-    upcoming_events = upcoming_events or []
+    """Build a flat tag list describing the situational context of a prediction-market
+    trade or research pass, for scoring against KnowledgeEntry / PostMortem rows."""
+    tags: list[str] = []
 
-    # ── Volatility (VIX) ──────────────────────────────────────────────────────
-    vix = macro.get("VIX", 15)
-    if vix > 40:
-        tags += ["vix_extreme", "crisis_volatility", "risk_off"]
-    elif vix > 30:
-        tags += ["vix_high", "risk_off"]
-    elif vix < 15:
-        tags.append("vix_low")
+    if category:
+        tags.append(f"category_{category.lower().replace(' ', '_')}")
 
-    # ── Interest rates (US 10Y) ───────────────────────────────────────────────
-    us10y = macro.get("US10Y", 4.0)
-    if us10y > 5.0:
-        tags += ["ten_year_high", "rate_hike_cycle"]
-    elif us10y > 4.5:
-        tags.append("ten_year_high")
-    elif us10y < 3.5:
-        tags += ["ten_year_low", "rate_cut_cycle"]
+    if edge_pct is not None:
+        tags.append(_bucket_edge(edge_pct))
+        tags.append("edge_positive" if edge_pct > 0 else "edge_negative")
 
-    # ── Dollar strength (DXY) ─────────────────────────────────────────────────
-    dxy = macro.get("DXY", 100)
-    if dxy > 105:
-        tags.append("dxy_high")
-    elif dxy > 102:
-        tags.append("dxy_rising")
-    elif dxy < 95:
-        tags.append("dxy_low")
+    if gap_pct is not None:
+        tags.append(_bucket_gap(gap_pct))
 
-    # ── Commodities ───────────────────────────────────────────────────────────
-    oil = macro.get("OIL", 75)
-    if oil > 100:
-        tags += ["oil_spike", "oil_high"]
-    elif oil > 85:
-        tags.append("oil_high")
+    if role_agreement_pct is not None:
+        if role_agreement_pct >= 0.80:
+            tags.append("role_agreement_high")
+        elif role_agreement_pct >= 0.50:
+            tags.append("role_agreement_moderate")
+        else:
+            tags.append("role_agreement_low")
 
-    gold = macro.get("GOLD", 1900)
-    if gold > 2500:
-        tags += ["gold_spike", "gold_high"]
-    elif gold > 2200:
-        tags.append("gold_high")
+    if source_agreement_pct is not None:
+        if source_agreement_pct >= 0.80:
+            tags.append("source_agreement_high")
+        elif source_agreement_pct >= 0.50:
+            tags.append("source_agreement_moderate")
+        else:
+            tags.append("source_agreement_low")
 
-    # ── Market regime ─────────────────────────────────────────────────────────
-    regime = world.get("regime", "Neutral")
-    if regime == "Risk Off":
-        tags.append("risk_off")
-    elif regime == "Risk On":
-        tags.append("risk_on")
+    if failure_category:
+        tags.append(f"failure_{failure_category}")
 
-    # ── Sentiment / Fear & Greed ──────────────────────────────────────────────
-    fng_key = "crypto_fng" if market == "crypto" else "stock_fng"
-    fng = world.get(fng_key, {}).get("value", 50)
-    if fng < 20:
-        tags.append("extreme_fear")
-    elif fng < 40:
-        tags.append("fear")
-    elif fng > 80:
-        tags.append("extreme_greed")
-    elif fng > 60:
-        tags.append("greed")
+    if used_xgboost is not None:
+        tags.append("xgboost_blended" if used_xgboost else "ensemble_only")
 
-    # ── Crypto funding rate ───────────────────────────────────────────────────
-    funding = world.get("funding_rate", 0)
-    if funding > 0.07:
-        tags += ["funding_extreme", "crowded_long"]
-    elif funding > 0.03:
-        tags.append("funding_high")
-    elif funding < -0.05:
-        tags += ["funding_negative", "crowded_short"]
-    elif funding < -0.02:
-        tags.append("funding_negative")
-
-    # ── Per-symbol technicals ─────────────────────────────────────────────────
-    rsi = indicators.get("rsi", 50)
-    if rsi is not None:
-        if rsi < 25:
-            tags.append("oversold")
-        elif rsi > 75:
-            tags.append("overbought")
-
-    # ── Economic calendar events ──────────────────────────────────────────────
-    for evt in upcoming_events:
-        title = evt.get("title", "").upper()
-        hours = evt.get("hours_until", 999)
-        if hours < 48:
-            tags.append("high_impact_event")
-        if "FOMC" in title or "RATE DECISION" in title or "FEDERAL RESERVE" in title:
-            tags += ["fomc_week", "fed_event"]
-        if "CPI" in title or "CONSUMER PRICE" in title:
-            tags.append("cpi_event")
-        if "NON-FARM" in title or "NFP" in title or "NONFARM" in title:
-            tags.append("nfp_event")
-        if "GDP" in title:
-            tags.append("gdp_event")
-
-    # ── Headline keyword scan ──────────────────────────────────────────────────
-    all_headlines = " ".join(
-        h.get("title", "") if isinstance(h, dict) else h
-        for hl in world.get("headlines", {}).values()
-        for h in hl
-    ).lower()
-    if any(w in all_headlines for w in ["war", "conflict", "sanctions", "invasion", "military", "missile"]):
-        tags.append("geopolitical_risk")
-    if any(w in all_headlines for w in ["bankrupt", "collapse", "hack", "insolvent", "fraud", "contagion"]):
-        tags.append("contagion_risk")
-    if any(w in all_headlines for w in ["halving", "etf approval", "etf rejected", "sec crypto"]):
-        tags.append("crypto_regulatory")
+    if action:
+        tags.append(f"action_{action.lower()}")
 
     return list(dict.fromkeys(tags))  # deduplicate, preserve order
 
 
 def score_entry(entry, context_tags: list[str]) -> float:
-    """Score a KnowledgeEntry against current context tags."""
+    """Score a KnowledgeEntry (or PostMortem-like object exposing .tags/.importance/
+    .times_referenced) against current context tags. Reused byte-for-byte from the
+    pre-rewrite technical-indicator bot — zero domain-specific logic."""
     entry_tags = list(entry.tags or [])
     if not entry_tags:
         overlap_fraction = 0.0

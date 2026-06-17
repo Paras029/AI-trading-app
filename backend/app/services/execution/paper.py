@@ -1,128 +1,145 @@
 """
-Paper trading broker: fills at mark price with simulated slippage.
-Safe default — no real orders are ever placed.
+Paper trading broker for Polymarket prediction markets: fills at the CURRENT REAL
+Polymarket price with simulated slippage. Safe default — no real orders are ever placed.
 """
 import uuid
 from datetime import datetime
-from decimal import Decimal
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from app.db.models import Trade, Position, Episode
+from sqlalchemy import select
+from app.db.models import Trade, PredictionMarket, PredictionSignal
 from app.core import redis_client
+from app.services.market_data import polymarket
+from app.services import portfolio as portfolio_service
 
 log = structlog.get_logger()
 
-SLIPPAGE_PCT = 0.0005   # 0.05% slippage simulation
+SLIPPAGE_PCT = 0.0005   # 0.05% slippage simulation — same convention as the old broker
 
 
-def _liq_price(side: str, entry: float, leverage: int) -> float:
-    maintenance_margin = 0.004   # 0.4% maintenance
-    if side == "long":
-        return round(entry * (1 - (1 / leverage) + maintenance_margin), 4)
-    else:
-        return round(entry * (1 + (1 / leverage) - maintenance_margin), 4)
-
-
-async def open_position(
+async def fill_order(
     db: AsyncSession,
-    episode_id: str,
-    market: str,
-    symbol: str,
+    portfolio,
+    signal: PredictionSignal,
     side: str,
-    leverage: int,
-    mark_price: float,
-    notional_usd: float,
-    strategy_name: str,
-    signal_id: str | None,
+    stake_usdc: float,
+    kelly_fraction_used: float,
 ) -> Trade:
-    slippage = mark_price * SLIPPAGE_PCT * (1 if side == "long" else -1)
-    entry_price = mark_price + slippage
-    qty = notional_usd / entry_price
+    """
+    Fills at the CURRENT REAL Polymarket price (polymarket.fetch_price) — simulated fills
+    against real live odds, not synthetic. shares = stake_usdc / entry_price, small
+    simulated slippage. Decrements portfolio.current_balance, persists
+    Trade(status='open', exec_venue='paper'), publishes 'trade_update'.
+    """
+    market_result = await db.execute(select(PredictionMarket).where(PredictionMarket.id == signal.market_id))
+    market = market_result.scalar_one_or_none()
+    if market is None:
+        raise ValueError(f"market {signal.market_id} not found")
+
+    token_id = market.yes_token_id if side == "YES" else market.no_token_id
+    raw_price = await polymarket.fetch_price(token_id)
+    if raw_price <= 0:
+        raw_price = market.current_yes_price if side == "YES" else (1 - market.current_yes_price)
+
+    slippage = raw_price * SLIPPAGE_PCT
+    entry_price = min(max(raw_price + slippage, 0.001), 0.999)
+    shares = stake_usdc / entry_price
 
     trade = Trade(
         id=str(uuid.uuid4()),
-        episode_id=episode_id,
-        market=market,
-        symbol=symbol,
+        portfolio_id=portfolio.id,
+        market_id=market.id,
+        signal_id=signal.id,
+        mode="paper",
         side=side,
-        leverage=leverage,
         entry_price=entry_price,
-        qty=qty,
-        notional=notional_usd,
-        strategy_name=strategy_name,
-        signal_id=signal_id,
-        is_open=True,
+        shares=shares,
+        stake_usdc=stake_usdc,
+        kelly_fraction_used=kelly_fraction_used,
+        full_kelly_fraction=kelly_fraction_used,
+        risk_approved=True,
+        exec_venue="paper",
+        status="open",
         opened_at=datetime.utcnow(),
     )
     db.add(trade)
 
-    liq = _liq_price(side, entry_price, leverage)
-    position = Position(
-        id=str(uuid.uuid4()),
-        episode_id=episode_id,
-        trade_id=trade.id,
-        market=market,
-        symbol=symbol,
-        side=side,
-        leverage=leverage,
-        entry_price=entry_price,
-        mark_price=mark_price,
-        qty=qty,
-        notional=notional_usd,
-        liquidation_price=liq,
-        liq_distance_pct=abs(mark_price - liq) / mark_price * 100,
-        strategy_name=strategy_name,
-    )
-    db.add(position)
+    market.status = "traded"
+
     await db.commit()
+    await db.refresh(trade)
 
-    await redis_client.publish(f"trade_update:{market}", {
-        "market": market, "type": "open", "symbol": symbol,
-        "side": side, "leverage": leverage, "entry_price": entry_price,
-        "notional": notional_usd, "strategy": strategy_name,
-    })
+    await portfolio_service.mark_trade_open(db, portfolio, stake_usdc)
 
-    log.info("position_opened", symbol=symbol, side=side, leverage=leverage,
-             entry=entry_price, notional=notional_usd)
+    await redis_client.publish("trade_update:paper", trade_to_dict(trade))
+
+    log.info("paper_trade_opened", market_id=market.id, side=side, entry_price=entry_price,
+              shares=shares, stake_usdc=stake_usdc)
     return trade
 
 
-async def close_position(
-    db: AsyncSession,
-    trade: Trade,
-    mark_price: float,
-    reason: str,
-) -> float:
-    slippage = mark_price * SLIPPAGE_PCT * (-1 if trade.side == "long" else 1)
-    exit_price = mark_price + slippage
+async def settle_trade(db: AsyncSession, trade: Trade, resolved_outcome: str) -> Trade:
+    """
+    pnl = shares - stake_usdc if won else -stake_usdc. Updates portfolio
+    balances/peak_equity. Triggers postmortem_agent.run_postmortem().
+    """
+    won = (trade.side == resolved_outcome)
 
-    if trade.side == "long":
-        raw_pnl = (exit_price - trade.entry_price) * trade.qty
+    if won:
+        payout = trade.shares  # each winning share redeems for $1
+        pnl = payout - trade.stake_usdc
+        trade.status = "settled_win"
     else:
-        raw_pnl = (trade.entry_price - exit_price) * trade.qty
-    leveraged_pnl = raw_pnl * trade.leverage
-    pnl_pct = leveraged_pnl / trade.notional * 100
+        payout = 0.0
+        pnl = -trade.stake_usdc
+        trade.status = "settled_loss"
 
-    trade.exit_price = exit_price
-    trade.pnl = round(leveraged_pnl, 4)
-    trade.pnl_pct = round(pnl_pct, 2)
-    trade.reason = reason
-    trade.is_open = False
-    trade.closed_at = datetime.utcnow()
-
-    # Remove position
-    result = await db.execute(select(Position).where(Position.trade_id == trade.id))
-    pos = result.scalar_one_or_none()
-    if pos:
-        await db.delete(pos)
-
+    trade.exit_price = 1.0 if won else 0.0
+    trade.pnl = round(pnl, 4)
+    trade.pnl_pct = round((pnl / trade.stake_usdc) * 100, 2) if trade.stake_usdc else 0.0
+    trade.settled_at = datetime.utcnow()
     await db.commit()
+    await db.refresh(trade)
 
-    await redis_client.publish(f"trade_update:{trade.market}", {
-        "market": trade.market, "type": "close", "symbol": trade.symbol,
-        "pnl": leveraged_pnl, "pnl_pct": pnl_pct, "reason": reason,
-    })
+    from app.db.models import Portfolio
+    pf_result = await db.execute(select(Portfolio).where(Portfolio.id == trade.portfolio_id))
+    pf = pf_result.scalar_one_or_none()
+    if pf:
+        await portfolio_service.mark_trade_closed(db, pf, pnl, payout)
 
-    log.info("position_closed", symbol=trade.symbol, pnl=leveraged_pnl, reason=reason)
-    return leveraged_pnl
+    await redis_client.publish("trade_update:paper", trade_to_dict(trade))
+    log.info("paper_trade_settled", trade_id=trade.id, outcome=resolved_outcome, pnl=pnl)
+
+    try:
+        from app.services.agents.postmortem_agent import run_postmortem
+        await run_postmortem(db, trade)
+    except Exception as e:
+        log.error("postmortem_trigger_failed", trade_id=trade.id, error=str(e))
+
+    return trade
+
+
+def trade_to_dict(trade: Trade) -> dict:
+    return {
+        "id": trade.id,
+        "portfolio_id": trade.portfolio_id,
+        "market_id": trade.market_id,
+        "signal_id": trade.signal_id,
+        "mode": trade.mode,
+        "side": trade.side,
+        "entry_price": trade.entry_price,
+        "shares": trade.shares,
+        "stake_usdc": trade.stake_usdc,
+        "kelly_fraction_used": trade.kelly_fraction_used,
+        "full_kelly_fraction": trade.full_kelly_fraction,
+        "risk_approved": trade.risk_approved,
+        "exec_venue": trade.exec_venue,
+        "exec_order_id": trade.exec_order_id,
+        "exec_tx_hash": trade.exec_tx_hash,
+        "status": trade.status,
+        "exit_price": trade.exit_price,
+        "pnl": trade.pnl,
+        "pnl_pct": trade.pnl_pct,
+        "opened_at": trade.opened_at.isoformat() if trade.opened_at else None,
+        "settled_at": trade.settled_at.isoformat() if trade.settled_at else None,
+    }

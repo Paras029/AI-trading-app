@@ -81,7 +81,37 @@ AVAILABLE_SIGNAL_MODELS = [
     },
 ]
 
-# ── Forecast ensemble roles (source of truth the Settings UI renders from) ────
+# ── Forecast models available for selection, across all providers ────────────
+# Each of the 5 ensemble roles below can be assigned ANY model from this catalog —
+# not locked to one provider — so the user can run e.g. all 5 roles on Gemini (free)
+# if that's the only key configured, or mix providers once more keys are added.
+# `requires_key` names the Settings field that must be non-empty for a model to be
+# selectable; the UI greys out / disables models whose key isn't present.
+AVAILABLE_FORECAST_MODELS = [
+    {"id": "gemini-2.0-flash", "provider": "google", "label": "Gemini 2.0 Flash", "tier": "free", "requires_key": "google_api_key"},
+    {"id": "gemini-2.0-flash-lite", "provider": "google", "label": "Gemini 2.0 Flash Lite", "tier": "free", "requires_key": "google_api_key"},
+    {"id": "gemini-1.5-flash", "provider": "google", "label": "Gemini 1.5 Flash", "tier": "free", "requires_key": "google_api_key"},
+    {"id": "deepseek-chat", "provider": "deepseek", "label": "DeepSeek Chat", "tier": "cheap", "requires_key": "deepseek_api_key"},
+    {"id": "claude-haiku-4-5-20251001", "provider": "anthropic", "label": "Claude Haiku 4.5", "tier": "cheap", "requires_key": "anthropic_api_key"},
+    {"id": "gpt-4o-mini", "provider": "openai", "label": "GPT-4o Mini", "tier": "cheap", "requires_key": "openai_api_key"},
+    {"id": "claude-sonnet-4-6", "provider": "anthropic", "label": "Claude Sonnet 4.6", "tier": "premium", "requires_key": "anthropic_api_key"},
+    {"id": "gpt-4o", "provider": "openai", "label": "GPT-4o", "tier": "premium", "requires_key": "openai_api_key"},
+]
+
+
+def model_provider(model_id: str) -> str | None:
+    """Looks up which provider a forecast model id belongs to (used to resolve a
+    role's configured model to a provider at call time, since roles are no longer
+    pinned to a fixed provider)."""
+    for m in AVAILABLE_FORECAST_MODELS:
+        if m["id"] == model_id:
+            return m["provider"]
+    return None
+
+
+# ── Forecast ensemble roles (defaults only — source of truth for role personas
+# and starting model/weight assignment; users may reassign any role to any
+# AVAILABLE_FORECAST_MODELS entry via Settings) ────────────────────────────────
 AVAILABLE_FORECAST_ROLES = [
     {
         "role": "primary_forecaster",

@@ -21,6 +21,16 @@ _PRICING: dict[str, dict] = {
 _PRICING.setdefault("claude-sonnet-4-6", {"input": 3.00 / 1_000_000, "output": 15.00 / 1_000_000})
 _PRICING.setdefault("claude-haiku-4-5-20251001", {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000})
 
+# Forecast-ensemble roles (config.AVAILABLE_FORECAST_ROLES) may use providers/models not
+# present in AVAILABLE_SIGNAL_MODELS — add published per-token pricing so these aren't
+# silently billed at Sonnet's rate.
+_PRICING.setdefault("gemini-2.0-flash", {"input": 0.0, "output": 0.0})  # free tier
+_PRICING.setdefault("gemini-1.5-flash", {"input": 0.0, "output": 0.0})  # free tier
+_PRICING.setdefault("gpt-4o", {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000})
+_PRICING.setdefault("gpt-4o-mini", {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000})
+_PRICING.setdefault("deepseek-chat", {"input": 0.27 / 1_000_000, "output": 1.10 / 1_000_000})
+_PRICING.setdefault("deepseek-reasoner", {"input": 0.55 / 1_000_000, "output": 2.19 / 1_000_000})
+
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0) -> float:
     pricing = _PRICING.get(model, {"input": 3.00 / 1_000_000, "output": 15.00 / 1_000_000})

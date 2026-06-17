@@ -2,14 +2,15 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.db.session import engine, Base
+from app.db.session import engine, Base, AsyncSessionLocal
 from app.db import models   # noqa: F401 — ensure models are registered
+from app.db.cleanup_legacy_tables import drop_legacy_tables
 from app.core import redis_client
 from app.tasks.runner import start_all, stop_all
 from app.services.knowledge_seeder import seed_knowledge_base
-from app.services.strategy_engine import seed_strategies
-from app.db.session import AsyncSessionLocal
-from app.routers import ws, overview, positions, episodes, evolution, strategies, world, lessons, trades
+from app.routers import (
+    ws, dashboard, scanner, research, prediction, risk, postmortem, trades,
+)
 from app.routers.settings import router as settings_router, costs_router
 
 log = structlog.get_logger()
@@ -19,27 +20,27 @@ log = structlog.get_logger()
 async def lifespan(app: FastAPI):
     log.info("apex_trading_bot_starting")
 
-    # Create tables
+    # Drop legacy (pre-rewrite) tables, then create the current schema.
     async with engine.begin() as conn:
+        await drop_legacy_tables(conn)
         await conn.run_sync(Base.metadata.create_all)
 
-    # Seed knowledge base + strategies for all markets
+    # Seed the knowledge base with domain-general risk-discipline frameworks.
     async with AsyncSessionLocal() as db:
         await seed_knowledge_base(db)
-        for market in ["crypto", "us_stocks", "india_stocks", "forex"]:
-            await seed_strategies(db, market)
 
-    # Initialise bot config — write default only if absent or model is no longer valid
-    from app.config import DEFAULT_BOT_CONFIG, AVAILABLE_SIGNAL_MODELS
-    valid_model_ids = {m["id"] for m in AVAILABLE_SIGNAL_MODELS}
+    # Initialise bot config — write defaults only if absent, never clobber a live operator's
+    # edits, and never let live_armed default to anything but False.
+    from app.config import DEFAULT_BOT_CONFIG
     existing = await redis_client.get_json("bot:config")
-    if not existing or existing.get("signal_model") not in valid_model_ids:
-        config = dict(existing or {})
-        config.update(DEFAULT_BOT_CONFIG)
-        await redis_client.set_json("bot:config", config)
-        log.info("bot_config_initialised", model=config["signal_model"])
+    if not existing:
+        await redis_client.set_json("bot:config", dict(DEFAULT_BOT_CONFIG))
+        log.info("bot_config_initialised")
+    elif "live_armed" not in existing:
+        existing["live_armed"] = False
+        await redis_client.set_json("bot:config", existing)
 
-    # Start background tasks
+    # Start background tasks (5-stage pipeline + WS Redis listener)
     await start_all()
     log.info("apex_trading_bot_ready")
 
@@ -51,9 +52,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Apex Trading Bot",
-    version="1.0.0",
-    description="Self-evolving AI trading bot — simulation on real live prices",
+    title="Apex Prediction Bot",
+    version="2.0.0",
+    description="Self-evolving multi-agent AI bot — paper/live trading on Polymarket prediction markets",
     lifespan=lifespan,
 )
 
@@ -67,13 +68,12 @@ app.add_middleware(
 
 # Routers
 app.include_router(ws.router)
-app.include_router(overview.router)
-app.include_router(positions.router)
-app.include_router(episodes.router)
-app.include_router(evolution.router)
-app.include_router(strategies.router)
-app.include_router(world.router)
-app.include_router(lessons.router)
+app.include_router(dashboard.router)
+app.include_router(scanner.router)
+app.include_router(research.router)
+app.include_router(prediction.router)
+app.include_router(risk.router)
+app.include_router(postmortem.router)
 app.include_router(trades.router)
 app.include_router(settings_router)
 app.include_router(costs_router)
@@ -81,4 +81,4 @@ app.include_router(costs_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "bot": "Apex Trading Bot v1"}
+    return {"status": "ok", "bot": "Apex Prediction Bot v2"}
