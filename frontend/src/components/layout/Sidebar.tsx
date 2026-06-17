@@ -1,30 +1,28 @@
 import { NavLink } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import axios from "axios";
 import {
-  LayoutDashboard, Zap, RefreshCw, TrendingUp, BookOpen,
-  Globe, GraduationCap, ArrowLeftRight, Settings,
+  LayoutDashboard, Radar, Search, BrainCircuit, ShieldCheck,
+  ArrowLeftRight, GraduationCap, Settings,
 } from "lucide-react";
-import { useStore } from "../../store";
 import { CostWidget } from "../settings/CostWidget";
+import type { SettingsData } from "../../types";
 import clsx from "clsx";
 
-const MARKET_NAV = [
-  { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/positions", label: "Positions", icon: Zap },
+const NAV = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/scanner", label: "Scanner", icon: Radar },
+  { to: "/research", label: "Research", icon: Search },
+  { to: "/prediction", label: "Prediction", icon: BrainCircuit },
+  { to: "/risk", label: "Risk", icon: ShieldCheck },
   { to: "/trades", label: "Trades", icon: ArrowLeftRight },
-  { to: "/world", label: "World", icon: Globe },
+  { to: "/postmortem", label: "Post-Mortem", icon: GraduationCap },
 ];
 
-const BOT_NAV = [
-  { to: "/episodes", label: "Episodes", icon: RefreshCw },
-  { to: "/evolution", label: "Evolution", icon: TrendingUp },
-  { to: "/strategies", label: "Strategies", icon: BookOpen },
-  { to: "/lessons", label: "Lessons", icon: GraduationCap },
-];
-
-function NavItem({ to, label, icon: Icon, market }: { to: string; label: string; icon: React.ElementType; market: string }) {
+function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: React.ElementType }) {
   return (
     <NavLink
-      to={`${to}${to === "/" ? "" : ""}?market=${market}`}
+      to={to}
       end={to === "/"}
       className={({ isActive }) =>
         clsx(
@@ -41,47 +39,59 @@ function NavItem({ to, label, icon: Icon, market }: { to: string; label: string;
   );
 }
 
-export function Sidebar() {
-  const { activeMarket } = useStore();
+function ModeChip() {
+  const { data: settings } = useQuery<SettingsData>({
+    queryKey: ["settings"],
+    queryFn: () => axios.get("/api/settings").then((r) => r.data),
+    refetchInterval: 10000,
+  });
+
+  const mode = settings?.config.prediction_trading_mode ?? "paper";
+  const armed = settings?.config.live_armed ?? false;
+  const isLive = mode === "live";
 
   return (
+    <div
+      className={clsx(
+        "flex items-center justify-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-md mb-1.5 tracking-wide",
+        isLive
+          ? "bg-red-50 text-red-700 border border-red-200"
+          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+      )}
+    >
+      <span className={clsx("w-1.5 h-1.5 rounded-full", isLive ? "bg-red-500" : "bg-emerald-500")} />
+      {isLive ? `LIVE${armed ? " — ARMED" : ""}` : "PAPER"}
+    </div>
+  );
+}
+
+export function Sidebar() {
+  return (
     <aside className="w-48 min-h-full bg-white border-r border-stone-200 flex flex-col py-3 px-2.5 shrink-0">
-      {/* Market-specific nav */}
-      <div className="mb-1">
-        <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest px-2.5 mb-1">
-          Market
-        </p>
-        <nav className="flex flex-col gap-0.5">
-          {MARKET_NAV.map(({ to, label, icon }) => (
-            <NavItem key={to} to={to} label={label} icon={icon} market={activeMarket} />
-          ))}
-        </nav>
+      {/* Logo */}
+      <div className="flex items-center gap-2 px-2.5 mb-3">
+        <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center text-white text-xs font-bold">
+          A
+        </div>
+        <span className="text-sm font-semibold text-stone-800">Apex Prediction Bot</span>
       </div>
+
+      <nav className="flex flex-col gap-0.5">
+        {NAV.map(({ to, label, icon }) => (
+          <NavItem key={to} to={to} label={label} icon={icon} />
+        ))}
+      </nav>
 
       <div className="my-2 border-t border-stone-100" />
 
-      {/* Bot-global nav */}
-      <div className="mb-1">
-        <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest px-2.5 mb-1">
-          Bot
-        </p>
-        <nav className="flex flex-col gap-0.5">
-          {BOT_NAV.map(({ to, label, icon }) => (
-            <NavItem key={to} to={to} label={label} icon={icon} market={activeMarket} />
-          ))}
-        </nav>
-      </div>
+      <NavItem to="/settings" label="Settings" icon={Settings} />
 
-      <div className="my-2 border-t border-stone-100" />
-
-      {/* Settings */}
-      <NavItem to="/settings" label="Settings" icon={Settings} market={activeMarket} />
-
-      {/* Cost widget + disclaimer */}
+      {/* Mode chip + cost widget + disclaimer */}
       <div className="mt-auto pt-4 px-0.5">
+        <ModeChip />
         <CostWidget />
         <p className="text-[10px] text-stone-400 leading-relaxed mt-2">
-          Simulation on real live prices. Fake money, real lessons.
+          Multi-agent Polymarket research & trading. Real prices, real or paper money.
         </p>
       </div>
     </aside>

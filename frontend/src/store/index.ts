@@ -1,61 +1,79 @@
 import { create } from "zustand";
-import type { Episode, Position, AISignal, Trade, WorldContext, Market } from "../types";
+import type {
+  Portfolio,
+  Trade,
+  PipelineStatusCounts,
+  SystemStatus,
+  ScannerActivityEvent,
+  ResearchActivityEvent,
+  RiskActivityEvent,
+  PredictionActivityEvent,
+} from "../types";
+
+interface PredictionActivityState {
+  role: string;
+  provider: string;
+  model: string;
+  status: PredictionActivityEvent["status"];
+  probability?: number | null;
+  reasoning?: string | null;
+  market_id?: string;
+}
 
 interface AppState {
-  activeMarket: Market;
-  setActiveMarket: (m: Market) => void;
+  portfolio: Portfolio | null;
+  setPortfolio: (p: Portfolio | null) => void;
 
-  episode: Episode | null;
-  setEpisode: (e: Episode | null) => void;
+  pipelineStatus: PipelineStatusCounts | null;
+  systemStatus: SystemStatus;
+  setPipelineStatus: (p: PipelineStatusCounts, system_status: SystemStatus) => void;
 
-  positions: Position[];
-  setPositions: (p: Position[]) => void;
-  updatePosition: (p: Position) => void;
+  scannerLog: ScannerActivityEvent[];
+  addScannerLog: (e: ScannerActivityEvent) => void;
 
-  signals: AISignal[];
-  addSignal: (s: AISignal) => void;
+  researchLog: ResearchActivityEvent[];
+  addResearchLog: (e: ResearchActivityEvent) => void;
+
+  riskLog: RiskActivityEvent[];
+  addRiskLog: (e: RiskActivityEvent) => void;
+
+  predictionActivity: Record<string, PredictionActivityState>;
+  setPredictionActivity: (role: string, activity: PredictionActivityState) => void;
 
   recentTrades: Trade[];
   addTrade: (t: Trade) => void;
-
-  world: WorldContext | null;
-  setWorld: (w: WorldContext) => void;
-
-  latestPrice: Record<string, number>;
-  setPrice: (symbol: string, price: number) => void;
 
   notification: string | null;
   setNotification: (n: string | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
-  activeMarket: "crypto",
-  setActiveMarket: (m) => set({ activeMarket: m }),
+  portfolio: null,
+  setPortfolio: (p) => set({ portfolio: p }),
 
-  episode: null,
-  setEpisode: (e) => set({ episode: e }),
+  pipelineStatus: null,
+  systemStatus: "operational",
+  setPipelineStatus: (p, system_status) => set({ pipelineStatus: p, systemStatus: system_status }),
 
-  positions: [],
-  setPositions: (p) => set({ positions: p }),
-  updatePosition: (p) =>
-    set((s) => ({
-      positions: s.positions.map((x) => (x.id === p.id ? p : x)),
-    })),
+  scannerLog: [],
+  addScannerLog: (e) =>
+    set((s) => ({ scannerLog: [e, ...s.scannerLog].slice(0, 50) })),
 
-  signals: [],
-  addSignal: (sig) =>
-    set((s) => ({ signals: [sig, ...s.signals].slice(0, 50) })),
+  researchLog: [],
+  addResearchLog: (e) =>
+    set((s) => ({ researchLog: [e, ...s.researchLog].slice(0, 50) })),
+
+  riskLog: [],
+  addRiskLog: (e) =>
+    set((s) => ({ riskLog: [e, ...s.riskLog].slice(0, 50) })),
+
+  predictionActivity: {},
+  setPredictionActivity: (role, activity) =>
+    set((s) => ({ predictionActivity: { ...s.predictionActivity, [role]: activity } })),
 
   recentTrades: [],
   addTrade: (t) =>
     set((s) => ({ recentTrades: [t, ...s.recentTrades].slice(0, 100) })),
-
-  world: null,
-  setWorld: (w) => set({ world: w }),
-
-  latestPrice: {},
-  setPrice: (symbol, price) =>
-    set((s) => ({ latestPrice: { ...s.latestPrice, [symbol]: price } })),
 
   notification: null,
   setNotification: (n) => set({ notification: n }),

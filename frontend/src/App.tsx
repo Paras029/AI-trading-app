@@ -1,13 +1,12 @@
 import { Routes, Route } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
-import { OverviewPage } from "./components/overview/OverviewPage";
-import { PositionsPage } from "./components/positions/PositionsPage";
-import { EpisodesPage } from "./components/episodes/EpisodesPage";
-import { EvolutionPage } from "./components/evolution/EvolutionPage";
-import { StrategiesPage } from "./components/strategies/StrategiesPage";
-import { WorldPage } from "./components/world/WorldPage";
-import { LessonsPage } from "./components/lessons/LessonsPage";
+import { DashboardPage } from "./components/dashboard/DashboardPage";
+import { ScannerPage } from "./components/scanner/ScannerPage";
+import { ResearchPage } from "./components/research/ResearchPage";
+import { PredictionPage } from "./components/prediction/PredictionPage";
+import { RiskPage } from "./components/risk/RiskPage";
 import { TradesPage } from "./components/trades/TradesPage";
+import { PostMortemPage } from "./components/postmortem/PostMortemPage";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { useWebSocket } from "./hooks/useWebSocket";
 
@@ -16,14 +15,13 @@ function AppContent() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<OverviewPage />} />
-        <Route path="positions" element={<PositionsPage />} />
-        <Route path="episodes" element={<EpisodesPage />} />
-        <Route path="evolution" element={<EvolutionPage />} />
-        <Route path="strategies" element={<StrategiesPage />} />
-        <Route path="world" element={<WorldPage />} />
-        <Route path="lessons" element={<LessonsPage />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="scanner" element={<ScannerPage />} />
+        <Route path="research" element={<ResearchPage />} />
+        <Route path="prediction" element={<PredictionPage />} />
+        <Route path="risk" element={<RiskPage />} />
         <Route path="trades" element={<TradesPage />} />
+        <Route path="postmortem" element={<PostMortemPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

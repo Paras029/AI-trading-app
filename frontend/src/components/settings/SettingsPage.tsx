@@ -1,42 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import clsx from "clsx";
-
-interface Model {
-  id: string;
-  name: string;
-  tier: string;
-  input_cost_per_m: number;
-  output_cost_per_m: number;
-  description: string;
-}
-
-interface DepthOption {
-  id: string;
-  label: string;
-  description: string;
-  candles: number;
-  headlines: number;
-  knowledge: number;
-  max_tokens: number;
-}
-
-interface BotConfig {
-  signal_model: string;
-  prompt_depth: string;
-}
-
-interface SettingsData {
-  config: BotConfig;
-  available_models: Model[];
-  prompt_depths: DepthOption[];
-}
-
-interface BotStatus {
-  paused: boolean;
-  market_hours: Record<string, boolean>;
-}
+import type { SettingsData, BotConfig, BotStatus, Mode } from "../../types";
 
 interface CostEntry {
   model?: string;
@@ -57,12 +23,7 @@ interface CostsData {
 
 type Period = "today" | "week" | "all";
 
-const MARKET_LABELS: Record<string, string> = {
-  crypto: "Crypto",
-  us_stocks: "US Stocks",
-  india_stocks: "India",
-  forex: "Forex",
-};
+const ARM_PHRASE = "I UNDERSTAND THE RISK";
 
 function fmt(n: number) {
   return n < 0.001 ? "<$0.001" : `$${n.toFixed(4)}`;
@@ -71,6 +32,8 @@ function fmt(n: number) {
 export function SettingsPage() {
   const qc = useQueryClient();
   const [period, setPeriod] = useState<Period>("today");
+  const [confirmText, setConfirmText] = useState("");
+  const [localGates, setLocalGates] = useState<Partial<BotConfig> | null>(null);
 
   const { data: settings, isLoading } = useQuery<SettingsData>({
     queryKey: ["settings"],
@@ -89,6 +52,10 @@ export function SettingsPage() {
     refetchInterval: 30000,
   });
 
+  useEffect(() => {
+    if (settings && !localGates) setLocalGates(settings.config);
+  }, [settings, localGates]);
+
   const mutation = useMutation({
     mutationFn: (patch: Partial<BotConfig>) =>
       axios.put("/api/settings", patch).then((r) => r.data),
@@ -105,13 +72,44 @@ export function SettingsPage() {
     },
   });
 
-  if (isLoading || !settings) {
+  const armMutation = useMutation({
+    mutationFn: (confirmation: string) =>
+      axios.post("/api/settings/arm-live", { confirmation }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      setConfirmText("");
+    },
+  });
+
+  const disarmMutation = useMutation({
+    mutationFn: () => axios.post("/api/settings/disarm-live").then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+
+  if (isLoading || !settings || !localGates) {
     return <div className="text-stone-400 p-6">Loading settings…</div>;
   }
 
-  const { config, available_models, prompt_depths } = settings;
+  const { config, forecast_roles } = settings;
   const paused = status?.paused ?? false;
-  const market_hours = status?.market_hours ?? {};
+  const mode = config.prediction_trading_mode;
+  const armed = config.live_armed;
+  const phraseMatches = confirmText === ARM_PHRASE;
+
+  function saveGateField(key: keyof BotConfig, value: number) {
+    setLocalGates((g) => (g ? { ...g, [key]: value } : g));
+  }
+
+  const GATE_FIELDS: { key: keyof BotConfig; label: string; step: number }[] = [
+    { key: "min_edge_pct", label: "Min Edge %", step: 0.01 },
+    { key: "max_position_pct", label: "Max Position %", step: 0.01 },
+    { key: "single_position_cap_usd", label: "Single Position Cap ($)", step: 1 },
+    { key: "max_total_exposure_pct", label: "Max Total Exposure %", step: 0.01 },
+    { key: "max_concurrent_positions", label: "Max Concurrent Positions", step: 1 },
+    { key: "max_drawdown_pct", label: "Max Drawdown %", step: 0.01 },
+    { key: "daily_loss_limit_pct", label: "Daily Loss Limit %", step: 0.01 },
+    { key: "max_slippage_pct", label: "Max Slippage %", step: 0.01 },
+  ];
 
   return (
     <div className="p-6 max-w-2xl space-y-8">
@@ -158,88 +156,187 @@ export function SettingsPage() {
             </div>
           </div>
           <p className="text-xs text-stone-500">
-            Pause stops new signals. Stop-loss and take-profit monitoring keeps running.
+            Pause stops new risk-approved trades. Scanner/Research/Prediction keep running so the UI stays informative; the kill switch (gate 1 of 9) short-circuits the Risk stage.
           </p>
-          {Object.keys(MARKET_LABELS).length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {Object.entries(MARKET_LABELS).map(([key, label]) => {
-                const open = market_hours[key];
-                return (
-                  <span
-                    key={key}
-                    className={clsx(
-                      "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs",
-                      open
-                        ? "bg-green-50 text-green-700 border border-green-200"
-                        : "bg-stone-100 text-stone-500 border border-stone-200"
-                    )}
-                  >
-                    <span className={clsx("w-1.5 h-1.5 rounded-full", open ? "bg-green-500" : "bg-stone-400")} />
-                    {label}
-                  </span>
-                );
-              })}
-            </div>
-          )}
         </div>
       </section>
 
-      {/* ── Signal Model ─────────────────────────────────────────── */}
+      {/* ── Execution Mode + Arm Live ───────────────────────────────── */}
       <section>
         <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
-          Signal Model
+          Execution Mode
+        </h2>
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={() => mutation.mutate({ prediction_trading_mode: "paper" as Mode })}
+            className={clsx(
+              "flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors",
+              mode === "paper" ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "border-stone-200 text-stone-500 hover:border-stone-300"
+            )}
+          >
+            Paper
+          </button>
+          <button
+            onClick={() => mutation.mutate({ prediction_trading_mode: "live" as Mode })}
+            className={clsx(
+              "flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors",
+              mode === "live" ? "bg-red-50 border-red-300 text-red-700" : "border-stone-200 text-stone-500 hover:border-stone-300"
+            )}
+          >
+            Live
+          </button>
+        </div>
+
+        <div className="border-2 border-red-300 rounded-xl p-4 bg-red-50/40 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-bold text-red-700">Arm Live Trading</p>
+            <span
+              className={clsx(
+                "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                armed ? "bg-red-600 text-white" : "bg-stone-200 text-stone-500"
+              )}
+            >
+              {armed ? "armed" : "disarmed"}
+            </span>
+          </div>
+          <p className="text-xs text-red-700/80 leading-relaxed">
+            Full gate grid and live decision log live on the Risk page. Type the exact phrase
+            below to arm — real funds will be used once "Live" mode and "Armed" are both active.
+          </p>
+          <p className="text-xs font-mono bg-white border border-red-200 rounded px-2 py-1 text-red-800">
+            {ARM_PHRASE}
+          </p>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder="Type confirmation phrase"
+            disabled={armed}
+            className="w-full border border-red-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-50"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => armMutation.mutate(confirmText)}
+              disabled={!phraseMatches || armed || armMutation.isPending}
+              className="flex-1 px-3 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Arm Live Trading
+            </button>
+            <button
+              onClick={() => disarmMutation.mutate()}
+              disabled={!armed || disarmMutation.isPending}
+              className="flex-1 px-3 py-2 rounded-lg text-sm font-medium border border-stone-300 text-stone-700 hover:bg-stone-50 disabled:opacity-40 transition-colors"
+            >
+              Disarm
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Forecast Roles ─────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
+          Forecast Roles
         </h2>
         <div className="space-y-2">
-          {available_models.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => mutation.mutate({ signal_model: m.id })}
-              className={clsx(
-                "w-full text-left border rounded-lg p-3 transition-all",
-                config.signal_model === m.id
-                  ? "border-active-nav bg-blue-50"
-                  : "border-stone-200 hover:border-stone-300 bg-white"
-              )}
-            >
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="font-medium text-sm text-stone-800">{m.name}</span>
-                <span className="text-xs text-stone-400">
-                  ${m.input_cost_per_m}/M in · ${m.output_cost_per_m}/M out
-                </span>
+          {forecast_roles.map((r) => {
+            const weight = config.forecast_role_weights?.[r.role] ?? r.default_weight;
+            const model = config.forecast_role_models?.[r.role] ?? r.default_model;
+            return (
+              <div key={r.role} className="border border-stone-200 rounded-lg p-3 bg-white">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-sm text-stone-800 capitalize">{r.role.replace(/_/g, " ")}</span>
+                  <span
+                    className={clsx(
+                      "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase",
+                      r.has_key ?? true ? "bg-emerald-50 text-emerald-600" : "bg-stone-100 text-stone-400"
+                    )}
+                  >
+                    {r.provider}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={model}
+                    onChange={(e) =>
+                      mutation.mutate({
+                        forecast_role_models: { ...config.forecast_role_models, [r.role]: e.target.value },
+                      })
+                    }
+                    className="flex-1 border border-stone-200 rounded px-2 py-1 text-xs"
+                  />
+                  <input
+                    type="number"
+                    step={0.05}
+                    min={0}
+                    max={1}
+                    value={weight}
+                    onChange={(e) =>
+                      mutation.mutate({
+                        forecast_role_weights: { ...config.forecast_role_weights, [r.role]: Number(e.target.value) },
+                      })
+                    }
+                    className="w-20 border border-stone-200 rounded px-2 py-1 text-xs"
+                  />
+                </div>
               </div>
-              <p className="text-xs text-stone-500">{m.description}</p>
-            </button>
-          ))}
+            );
+          })}
         </div>
-        {mutation.isPending && (
-          <p className="text-xs text-stone-400 mt-1">Saving…</p>
-        )}
       </section>
 
-      {/* ── Prompt Depth ─────────────────────────────────────────── */}
+      {/* ── Scanner Filter Defaults ─────────────────────────────────── */}
       <section>
         <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
-          Prompt Depth
+          Scanner Filter Defaults
         </h2>
-        <div className="grid grid-cols-3 gap-2">
-          {prompt_depths.map((d) => (
-            <button
-              key={d.id}
-              onClick={() => mutation.mutate({ prompt_depth: d.id })}
-              className={clsx(
-                "border rounded-lg p-3 text-left transition-all",
-                config.prompt_depth === d.id
-                  ? "border-active-nav bg-blue-50"
-                  : "border-stone-200 hover:border-stone-300 bg-white"
-              )}
-            >
-              <p className="font-medium text-sm text-stone-800 mb-1">{d.label}</p>
-              <p className="text-xs text-stone-500 leading-relaxed">{d.description}</p>
-              <p className="text-xs text-stone-400 mt-1.5">
-                {d.candles}c · {d.headlines}h · {d.max_tokens}tok
-              </p>
-            </button>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Min Volume ($)" value={config.scanner_min_volume} onChange={(v) => mutation.mutate({ scanner_min_volume: v })} />
+          <NumberField label="Max Expiry (days)" value={config.scanner_max_expiry_days} onChange={(v) => mutation.mutate({ scanner_max_expiry_days: v })} />
+          <NumberField label="Min Edge (%)" value={config.scanner_min_edge_pct} step={0.01} onChange={(v) => mutation.mutate({ scanner_min_edge_pct: v })} />
+        </div>
+      </section>
+
+      {/* ── Risk Gate Thresholds ─────────────────────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
+          Risk Gate Thresholds
+        </h2>
+        <div className="grid grid-cols-2 gap-3">
+          {GATE_FIELDS.map((f) => (
+            <NumberField
+              key={f.key}
+              label={f.label}
+              step={f.step}
+              value={Number(localGates[f.key] ?? 0)}
+              onChange={(v) => saveGateField(f.key, v)}
+              onBlurCommit={() => mutation.mutate({ [f.key]: localGates[f.key] } as Partial<BotConfig>)}
+            />
           ))}
+        </div>
+
+        <div className="mt-4">
+          <label className="block">
+            <span className="text-xs text-stone-400 mb-1 flex justify-between">
+              <span>Kelly Multiplier</span>
+              <span className="font-medium text-stone-700">{((localGates.kelly_multiplier ?? config.kelly_multiplier) * 100).toFixed(0)}%</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={localGates.kelly_multiplier ?? config.kelly_multiplier}
+              onChange={(e) => saveGateField("kelly_multiplier", Number(e.target.value))}
+              onMouseUp={() => mutation.mutate({ kelly_multiplier: localGates.kelly_multiplier })}
+              onTouchEnd={() => mutation.mutate({ kelly_multiplier: localGates.kelly_multiplier })}
+              className="w-full"
+            />
+            <span className="text-[11px] text-stone-400 mt-1 block">
+              Fraction of full Kelly stake actually applied (e.g. 25% = quarter-Kelly).
+            </span>
+          </label>
         </div>
       </section>
 
@@ -292,6 +389,34 @@ export function SettingsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  onBlurCommit,
+  step = 1,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  onBlurCommit?: () => void;
+  step?: number;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs text-stone-400 mb-1 block">{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onBlur={onBlurCommit}
+        className="w-full border border-stone-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+      />
+    </label>
   );
 }
 

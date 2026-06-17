@@ -1,6 +1,5 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
-import { TopBar } from "./TopBar";
 import { useStore } from "../../store";
 
 export function Layout() {
@@ -8,7 +7,6 @@ export function Layout() {
 
   return (
     <div className="flex flex-col min-h-screen bg-cream font-sans">
-      <TopBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 flex flex-col overflow-auto">
