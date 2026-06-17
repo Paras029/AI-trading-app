@@ -90,7 +90,11 @@ export function SettingsPage() {
     return <div className="text-stone-400 p-6">Loading settings…</div>;
   }
 
-  const { config, forecast_roles } = settings;
+  const { config, forecast_roles, forecast_models } = settings;
+  const totalWeight = forecast_roles.reduce(
+    (sum, r) => sum + (config.forecast_role_weights?.[r.role] ?? r.default_weight),
+    0
+  ) || 1;
   const paused = status?.paused ?? false;
   const mode = config.prediction_trading_mode;
   const armed = config.live_armed;
@@ -235,55 +239,80 @@ export function SettingsPage() {
 
       {/* ── Forecast Roles ─────────────────────────────────────────── */}
       <section>
-        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-3">
+        <h2 className="text-sm font-semibold text-stone-700 uppercase tracking-wider mb-1">
           Forecast Roles
         </h2>
+        <p className="text-xs text-stone-500 mb-3">
+          Assign any available model to each role. Models without a configured API key are
+          greyed out — give me the keys you have and only those show up as selectable.
+        </p>
         <div className="space-y-2">
           {forecast_roles.map((r) => {
             const weight = config.forecast_role_weights?.[r.role] ?? r.default_weight;
-            const model = config.forecast_role_models?.[r.role] ?? r.default_model;
+            const modelId = config.forecast_role_models?.[r.role] ?? r.default_model;
+            const selectedModel = forecast_models.find((m) => m.id === modelId);
+            const normalizedPct = (weight / totalWeight) * 100;
             return (
               <div key={r.role} className="border border-stone-200 rounded-lg p-3 bg-white">
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-2">
                   <span className="font-medium text-sm text-stone-800 capitalize">{r.role.replace(/_/g, " ")}</span>
                   <span
                     className={clsx(
                       "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase",
-                      r.has_key ?? true ? "bg-emerald-50 text-emerald-600" : "bg-stone-100 text-stone-400"
+                      selectedModel?.has_key
+                        ? "bg-emerald-50 text-emerald-600"
+                        : "bg-red-50 text-red-500"
                     )}
                   >
-                    {r.provider}
+                    {selectedModel ? `${selectedModel.provider}${selectedModel.has_key ? "" : " — no key"}` : "unassigned"}
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
+
+                <select
+                  value={modelId}
+                  onChange={(e) =>
+                    mutation.mutate({
+                      forecast_role_models: { ...config.forecast_role_models, [r.role]: e.target.value },
+                    })
+                  }
+                  className="w-full border border-stone-200 rounded px-2 py-1.5 text-xs mb-2 bg-white"
+                >
+                  {forecast_models.map((m) => (
+                    <option key={m.id} value={m.id} disabled={!m.has_key}>
+                      {m.label} ({m.provider} · {m.tier}){m.has_key ? "" : " — no API key"}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="block">
+                  <span className="text-[11px] text-stone-400 mb-1 flex justify-between">
+                    <span>Weight</span>
+                    <span className="font-medium text-stone-700">
+                      {weight.toFixed(2)} raw · {normalizedPct.toFixed(0)}% of ensemble
+                    </span>
+                  </span>
                   <input
-                    type="text"
-                    value={model}
-                    onChange={(e) =>
-                      mutation.mutate({
-                        forecast_role_models: { ...config.forecast_role_models, [r.role]: e.target.value },
-                      })
-                    }
-                    className="flex-1 border border-stone-200 rounded px-2 py-1 text-xs"
-                  />
-                  <input
-                    type="number"
-                    step={0.05}
+                    type="range"
                     min={0}
                     max={1}
+                    step={0.05}
                     value={weight}
                     onChange={(e) =>
                       mutation.mutate({
                         forecast_role_weights: { ...config.forecast_role_weights, [r.role]: Number(e.target.value) },
                       })
                     }
-                    className="w-20 border border-stone-200 rounded px-2 py-1 text-xs"
+                    className="w-full"
                   />
-                </div>
+                </label>
               </div>
             );
           })}
         </div>
+        <p className="text-[11px] text-stone-400 mt-2">
+          Roles whose assigned model has no API key are skipped at run time (zero cost) and the
+          remaining roles' weights are renormalized to sum to 100% automatically.
+        </p>
       </section>
 
       {/* ── Scanner Filter Defaults ─────────────────────────────────── */}

@@ -309,9 +309,19 @@ export interface BotConfig extends RiskGateThresholds {
   scanner_min_edge_pct: number;
 }
 
+export interface ForecastModelOption {
+  id: string;
+  provider: string;
+  label: string;
+  tier: "free" | "cheap" | "premium";
+  requires_key: string;
+  has_key?: boolean;
+}
+
 export interface SettingsData {
   config: BotConfig;
   forecast_roles: ForecastRoleConfig[];
+  forecast_models: ForecastModelOption[];
 }
 
 export interface BotStatus {

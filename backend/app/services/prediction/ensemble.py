@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.config import settings, AVAILABLE_FORECAST_ROLES
+from app.config import settings, AVAILABLE_FORECAST_ROLES, model_provider
 from app.db.models import ModelForecast, PredictionMarket, ResearchBrief
 from app.core import redis_client
 from app.services.ai import providers
@@ -37,16 +37,23 @@ FORECAST_ROLES = [
 
 
 async def _resolve_role_configs(bot_config: dict) -> list[dict]:
-    """Apply Redis-configured weight/model overrides on top of AVAILABLE_FORECAST_ROLES."""
+    """Apply Redis-configured weight/model overrides on top of AVAILABLE_FORECAST_ROLES.
+
+    A role's provider is no longer pinned to its default — the user can reassign any role
+    to any AVAILABLE_FORECAST_MODELS entry via Settings, so the provider actually used for
+    the call is resolved from the chosen model id, falling back to the role's default
+    provider only if the configured model id isn't in the catalog."""
     weights = bot_config.get("forecast_role_weights", {})
     models = bot_config.get("forecast_role_models", {})
     resolved = []
     for role_def in FORECAST_ROLES:
         role = role_def["role"]
+        model = models.get(role, role_def["model"])
+        provider = model_provider(model) or role_def["provider"]
         resolved.append({
             "role": role,
-            "provider": role_def["provider"],
-            "model": models.get(role, role_def["model"]),
+            "provider": provider,
+            "model": model,
             "weight": float(weights.get(role, role_def["weight"])),
         })
     return resolved

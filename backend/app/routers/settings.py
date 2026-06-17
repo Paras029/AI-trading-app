@@ -49,13 +49,20 @@ def _forecast_roles_with_key_status() -> list[dict]:
     return roles
 
 
+def _forecast_models_with_key_status() -> list[dict]:
+    models = []
+    for m in AVAILABLE_FORECAST_MODELS:
+        models.append({**m, "has_key": providers.has_key_for_provider(m["provider"])})
+    return models
+
+
 @router.get("")
 async def get_settings():
     config = await redis_client.get_bot_config()
     return {
         "config": config,
         "forecast_roles": _forecast_roles_with_key_status(),
-        "forecast_models": AVAILABLE_FORECAST_MODELS,
+        "forecast_models": _forecast_models_with_key_status(),
     }
 
 
